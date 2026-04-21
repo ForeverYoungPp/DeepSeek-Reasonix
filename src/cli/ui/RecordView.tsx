@@ -11,6 +11,7 @@
 import { Box, Text } from "ink";
 import React from "react";
 import type { TranscriptRecord } from "../../transcript.js";
+import { PlanStateBlock } from "./PlanStateBlock.js";
 
 export interface RecordViewProps {
   rec: TranscriptRecord;
@@ -51,6 +52,7 @@ export function RecordView({ rec, compact = false }: RecordViewProps) {
           ) : null}
           {rec.usage ? <CacheBadge usage={rec.usage} /> : null}
         </Box>
+        {rec.planState ? <PlanStateBlock planState={rec.planState} /> : null}
         {rec.content ? (
           <Text>{rec.content}</Text>
         ) : (

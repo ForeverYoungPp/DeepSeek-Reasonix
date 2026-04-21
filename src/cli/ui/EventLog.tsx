@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { type TypedPlanState, isPlanStateEmpty } from "../../harvest.js";
 import type { BranchProgress, BranchSummary } from "../../loop.js";
 import type { TurnStats } from "../../telemetry.js";
+import { PlanStateBlock } from "./PlanStateBlock.js";
 import { Markdown } from "./markdown.js";
 
 export type DisplayRole = "user" | "assistant" | "tool" | "system" | "error" | "info";
@@ -100,25 +101,6 @@ function BranchBlock({ branch }: { branch: BranchSummary }) {
         {` samples → picked #${branch.chosenIndex}   `}
         <Text dimColor>{per}</Text>
       </Text>
-    </Box>
-  );
-}
-
-function PlanStateBlock({ planState }: { planState: TypedPlanState }) {
-  const lines: Array<[string, string[]]> = [];
-  if (planState.subgoals.length) lines.push(["subgoals", planState.subgoals]);
-  if (planState.hypotheses.length) lines.push(["hypotheses", planState.hypotheses]);
-  if (planState.uncertainties.length) lines.push(["uncertainties", planState.uncertainties]);
-  if (planState.rejectedPaths.length) lines.push(["rejected", planState.rejectedPaths]);
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      {lines.map(([label, items]) => (
-        <Text key={label} color="magenta">
-          {"‹ "}
-          <Text bold>{label}</Text>
-          {` (${items.length}): ${items.join(" · ")}`}
-        </Text>
-      ))}
     </Box>
   );
 }
