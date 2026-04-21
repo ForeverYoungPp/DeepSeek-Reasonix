@@ -240,11 +240,9 @@ function BlockView({ block }: { block: Block }) {
   switch (block.kind) {
     case "heading":
       return (
-        <Box marginTop={block.level === 1 ? 1 : 0}>
-          <Text bold color="cyan">
-            <InlineMd text={block.text} />
-          </Text>
-        </Box>
+        <Text bold color="cyan">
+          <InlineMd text={block.text} />
+        </Text>
       );
     case "paragraph":
       return <InlineMd text={block.text} />;
@@ -274,7 +272,7 @@ export function Markdown({ text }: { text: string }) {
   const cleaned = stripMath(text);
   const blocks = React.useMemo(() => parseBlocks(cleaned), [cleaned]);
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" gap={1}>
       {blocks.map((b, i) => (
         <BlockView key={`${i}-${b.kind}`} block={b} />
       ))}

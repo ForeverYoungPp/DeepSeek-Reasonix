@@ -76,15 +76,14 @@ export const EventRow = React.memo(function EventRow({ event }: { event: Display
 });
 
 function ReasoningBlock({ reasoning }: { reasoning: string }) {
-  const max = 500;
+  const max = 220;
+  const flat = reasoning.replace(/\s+/g, " ").trim();
   const preview =
-    reasoning.length <= max
-      ? reasoning
-      : `${reasoning.slice(0, max)}… (+${reasoning.length - max} chars)`;
+    flat.length <= max ? flat : `${flat.slice(0, max)}… (+${flat.length - max} chars)`;
   return (
-    <Box borderStyle="single" borderColor="gray" paddingX={1}>
+    <Box>
       <Text dimColor italic>
-        {"thinking › "}
+        {"↳ thinking: "}
         {preview}
       </Text>
     </Box>
