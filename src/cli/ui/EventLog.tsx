@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import React from "react";
 import type { TurnStats } from "../../telemetry.js";
+import { Markdown } from "./markdown.js";
 
 export type DisplayRole = "user" | "assistant" | "tool" | "system" | "error" | "info";
 
@@ -15,23 +16,7 @@ export interface DisplayEvent {
   streaming?: boolean;
 }
 
-export interface EventLogProps {
-  events: DisplayEvent[];
-  max?: number;
-}
-
-export function EventLog({ events, max = 40 }: EventLogProps) {
-  const visible = events.slice(-max);
-  return (
-    <Box flexDirection="column" flexGrow={1}>
-      {visible.map((ev) => (
-        <EventRow key={ev.id} event={ev} />
-      ))}
-    </Box>
-  );
-}
-
-function EventRow({ event }: { event: DisplayEvent }) {
+export const EventRow = React.memo(function EventRow({ event }: { event: DisplayEvent }) {
   if (event.role === "user") {
     return (
       <Box>
@@ -52,9 +37,15 @@ function EventRow({ event }: { event: DisplayEvent }) {
           {event.streaming ? <Text dimColor>(streaming…)</Text> : null}
         </Box>
         {event.reasoning ? <ReasoningBlock reasoning={event.reasoning} /> : null}
-        <Text>{event.text || <Text dimColor>(no content)</Text>}</Text>
+        {event.streaming ? (
+          <Text>{event.text || <Text dimColor>(thinking…)</Text>}</Text>
+        ) : event.text ? (
+          <Markdown text={event.text} />
+        ) : (
+          <Text dimColor>(no content)</Text>
+        )}
         {event.stats ? <StatsLine stats={event.stats} /> : null}
-        {event.repair ? <Text color="magenta"> {event.repair}</Text> : null}
+        {event.repair ? <Text color="magenta">{event.repair}</Text> : null}
       </Box>
     );
   }
@@ -88,7 +79,7 @@ function EventRow({ event }: { event: DisplayEvent }) {
       <Text>{event.text}</Text>
     </Box>
   );
-}
+});
 
 function ReasoningBlock({ reasoning }: { reasoning: string }) {
   const max = 500;
@@ -97,7 +88,7 @@ function ReasoningBlock({ reasoning }: { reasoning: string }) {
       ? reasoning
       : `${reasoning.slice(0, max)}… (+${reasoning.length - max} chars)`;
   return (
-    <Box borderStyle="single" borderColor="gray" paddingX={1} marginBottom={0}>
+    <Box borderStyle="single" borderColor="gray" paddingX={1}>
       <Text dimColor italic>
         {"thinking › "}
         {preview}

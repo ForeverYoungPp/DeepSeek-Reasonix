@@ -1,0 +1,246 @@
+/**
+ * Minimal Markdown → Ink renderer for chat output.
+ *
+ * Handles the subset that actually shows up in LLM answers:
+ *   - ATX headers (# ##)
+ *   - Unordered / ordered lists
+ *   - Fenced code blocks (```lang)
+ *   - Inline **bold**, *italic*, `code`
+ *   - Paragraphs separated by blank lines
+ *   - LaTeX delimiters are stripped (\( \), \[ \], \boxed{X})
+ *
+ * The goal is not TeX-perfect math — it's "stop showing raw backslashes to
+ * the user." When the model insists on LaTeX, we strip the scaffolding and
+ * show the expression verbatim; terminals don't do math fonts anyway.
+ */
+
+import { Box, Text } from "ink";
+import React from "react";
+
+function stripMath(s: string): string {
+  return s
+    .replace(/\\\(/g, "")
+    .replace(/\\\)/g, "")
+    .replace(/\\\[\s*/g, "\n")
+    .replace(/\s*\\\]/g, "\n")
+    .replace(/\\boxed\{([^}]+)\}/g, "【$1】")
+    .replace(/\\cdot/g, "·")
+    .replace(/\\pm/g, "±")
+    .replace(/\\times/g, "×")
+    .replace(/\\sqrt\{([^}]+)\}/g, "√($1)")
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, "($1)/($2)")
+    .replace(/\\text\{([^}]+)\}/g, "$1")
+    .replace(/\\quad/g, "   ")
+    .replace(/\\,/g, " ");
+}
+
+/** Split a single line into styled segments for bold / italic / inline code. */
+const INLINE_RE = /(\*\*([^*\n]+?)\*\*|`([^`\n]+?)`|(?<![*\w])\*([^*\n]+?)\*(?!\w))/g;
+
+function InlineMd({ text }: { text: string }) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let idx = 0;
+  for (const m of text.matchAll(INLINE_RE)) {
+    const start = m.index ?? 0;
+    if (start > last) {
+      parts.push(<Text key={`t${idx++}`}>{text.slice(last, start)}</Text>);
+    }
+    if (m[2] !== undefined) {
+      parts.push(
+        <Text key={`b${idx++}`} bold>
+          {m[2]}
+        </Text>,
+      );
+    } else if (m[3] !== undefined) {
+      parts.push(
+        <Text key={`c${idx++}`} color="yellow">
+          {m[3]}
+        </Text>,
+      );
+    } else if (m[4] !== undefined) {
+      parts.push(
+        <Text key={`i${idx++}`} italic>
+          {m[4]}
+        </Text>,
+      );
+    }
+    last = start + m[0].length;
+  }
+  if (last < text.length) {
+    parts.push(<Text key={`t${idx++}`}>{text.slice(last)}</Text>);
+  }
+  return <Text>{parts}</Text>;
+}
+
+interface ParagraphBlock {
+  kind: "paragraph";
+  text: string;
+}
+interface HeadingBlock {
+  kind: "heading";
+  level: number;
+  text: string;
+}
+interface BulletBlock {
+  kind: "bullet";
+  items: string[];
+  ordered: boolean;
+  start: number;
+}
+interface CodeBlock {
+  kind: "code";
+  lang: string;
+  text: string;
+}
+interface HrBlock {
+  kind: "hr";
+}
+
+type Block = ParagraphBlock | HeadingBlock | BulletBlock | CodeBlock | HrBlock;
+
+function parseBlocks(raw: string): Block[] {
+  const lines = raw.split(/\r?\n/);
+  const out: Block[] = [];
+  let para: string[] = [];
+  let inCode = false;
+  let codeLang = "";
+  let codeBuf: string[] = [];
+  let listBuf: BulletBlock | null = null;
+
+  const flushPara = () => {
+    if (para.length) {
+      out.push({ kind: "paragraph", text: para.join(" ") });
+      para = [];
+    }
+  };
+  const flushList = () => {
+    if (listBuf) {
+      out.push(listBuf);
+      listBuf = null;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+$/g, "");
+
+    const fence = line.match(/^```(\w*)/);
+    if (fence) {
+      if (inCode) {
+        out.push({ kind: "code", lang: codeLang, text: codeBuf.join("\n") });
+        codeBuf = [];
+        codeLang = "";
+        inCode = false;
+      } else {
+        flushPara();
+        flushList();
+        inCode = true;
+        codeLang = fence[1] ?? "";
+      }
+      continue;
+    }
+    if (inCode) {
+      codeBuf.push(rawLine);
+      continue;
+    }
+
+    if (line.trim() === "") {
+      flushPara();
+      flushList();
+      continue;
+    }
+
+    if (/^[-*_]{3,}\s*$/.test(line)) {
+      flushPara();
+      flushList();
+      out.push({ kind: "hr" });
+      continue;
+    }
+
+    const hm = line.match(/^(#{1,6})\s+(.+)$/);
+    if (hm) {
+      flushPara();
+      flushList();
+      out.push({ kind: "heading", level: hm[1]!.length, text: hm[2]!.trim() });
+      continue;
+    }
+
+    const bm = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (bm) {
+      flushPara();
+      if (!listBuf || listBuf.ordered) {
+        flushList();
+        listBuf = { kind: "bullet", items: [], ordered: false, start: 1 };
+      }
+      listBuf.items.push(bm[1]!);
+      continue;
+    }
+
+    const om = line.match(/^\s*(\d+)\.\s+(.+)$/);
+    if (om) {
+      flushPara();
+      if (!listBuf || !listBuf.ordered) {
+        flushList();
+        listBuf = { kind: "bullet", items: [], ordered: true, start: Number(om[1]) };
+      }
+      listBuf.items.push(om[2]!);
+      continue;
+    }
+
+    flushList();
+    para.push(line);
+  }
+
+  if (inCode && codeBuf.length) {
+    out.push({ kind: "code", lang: codeLang, text: codeBuf.join("\n") });
+  }
+  flushPara();
+  flushList();
+  return out;
+}
+
+function BlockView({ block }: { block: Block }) {
+  switch (block.kind) {
+    case "heading":
+      return (
+        <Box marginTop={block.level === 1 ? 1 : 0}>
+          <Text bold color="cyan">
+            <InlineMd text={block.text} />
+          </Text>
+        </Box>
+      );
+    case "paragraph":
+      return <InlineMd text={block.text} />;
+    case "bullet":
+      return (
+        <Box flexDirection="column">
+          {block.items.map((item, i) => (
+            <Box key={`${i}-${item.slice(0, 24)}`}>
+              <Text color="cyan">{block.ordered ? ` ${block.start + i}. ` : "  • "}</Text>
+              <InlineMd text={item} />
+            </Box>
+          ))}
+        </Box>
+      );
+    case "code":
+      return (
+        <Box borderStyle="single" borderColor="gray" paddingX={1}>
+          <Text color="yellow">{block.text}</Text>
+        </Box>
+      );
+    case "hr":
+      return <Text dimColor>{"────────────────────────"}</Text>;
+  }
+}
+
+export function Markdown({ text }: { text: string }) {
+  const cleaned = stripMath(text);
+  const blocks = React.useMemo(() => parseBlocks(cleaned), [cleaned]);
+  return (
+    <Box flexDirection="column">
+      {blocks.map((b, i) => (
+        <BlockView key={`${i}-${b.kind}`} block={b} />
+      ))}
+    </Box>
+  );
+}

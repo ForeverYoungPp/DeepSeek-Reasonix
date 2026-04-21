@@ -1,10 +1,10 @@
 import { type WriteStream, createWriteStream } from "node:fs";
-import { Box, useApp } from "ink";
-import React, { useCallback, useMemo, useReducer, useRef, useState } from "react";
+import { Box, Static, useApp } from "ink";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
 import type { LoopEvent } from "../../loop.js";
 import type { SessionSummary } from "../../telemetry.js";
-import { type DisplayEvent, EventLog } from "./EventLog.js";
+import { type DisplayEvent, EventRow } from "./EventLog.js";
 import { PromptInput } from "./PromptInput.js";
 import { StatsPanel } from "./StatsPanel.js";
 
@@ -14,57 +14,23 @@ export interface AppProps {
   transcript?: string;
 }
 
-type Action =
-  | { type: "push"; event: DisplayEvent }
-  | { type: "append_assistant"; id: string; delta: string }
-  | { type: "append_reasoning"; id: string; delta: string }
-  | {
-      type: "finalize_assistant";
-      id: string;
-      stats?: DisplayEvent["stats"];
-      repair?: string;
-    };
+/**
+ * Throttle interval in ms. We flush streaming deltas at most this often to
+ * avoid re-rendering the whole UI on every single token from DeepSeek.
+ * 60ms ≈ 16Hz, fast enough to feel live, slow enough to not thrash Ink.
+ */
+const FLUSH_INTERVAL_MS = 60;
 
-function patchEvent(
-  state: DisplayEvent[],
-  id: string,
-  patch: (ev: DisplayEvent) => DisplayEvent,
-): DisplayEvent[] {
-  const copy = state.slice();
-  for (let i = copy.length - 1; i >= 0; i--) {
-    if (copy[i]!.id === id) {
-      copy[i] = patch(copy[i]!);
-      return copy;
-    }
-  }
-  return state;
-}
-
-function reducer(state: DisplayEvent[], action: Action): DisplayEvent[] {
-  if (action.type === "push") return [...state, action.event];
-  if (action.type === "append_assistant") {
-    return patchEvent(state, action.id, (ev) => ({ ...ev, text: ev.text + action.delta }));
-  }
-  if (action.type === "append_reasoning") {
-    return patchEvent(state, action.id, (ev) => ({
-      ...ev,
-      reasoning: (ev.reasoning ?? "") + action.delta,
-    }));
-  }
-  if (action.type === "finalize_assistant") {
-    return patchEvent(state, action.id, (ev) => ({
-      ...ev,
-      streaming: false,
-      stats: action.stats ?? ev.stats,
-      repair: action.repair ?? ev.repair,
-    }));
-  }
-  return state;
+interface StreamingState {
+  id: string;
+  text: string;
+  reasoning: string;
 }
 
 export function App({ model, system, transcript }: AppProps) {
   const { exit } = useApp();
-  const [events, dispatch] = useReducer(reducer, [] as DisplayEvent[]);
+  const [historical, setHistorical] = useState<DisplayEvent[]>([]);
+  const [streaming, setStreaming] = useState<DisplayEvent | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [summary, setSummary] = useState<SessionSummary>({
@@ -79,6 +45,11 @@ export function App({ model, system, transcript }: AppProps) {
   if (transcript && !transcriptRef.current) {
     transcriptRef.current = createWriteStream(transcript, { flags: "a" });
   }
+  useEffect(() => {
+    return () => {
+      transcriptRef.current?.end();
+    };
+  }, []);
 
   const loopRef = useRef<CacheFirstLoop | null>(null);
   const loop = useMemo(() => {
@@ -115,57 +86,83 @@ export function App({ model, system, transcript }: AppProps) {
         return;
       }
       if (text === "/clear") {
+        setHistorical([]);
         return;
       }
-      dispatch({
-        type: "push",
-        event: { id: `u-${Date.now()}`, role: "user", text },
-      });
-      setBusy(true);
+
+      // User message is immutable — push to Static immediately.
+      setHistorical((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
+
       const assistantId = `a-${Date.now()}`;
-      dispatch({
-        type: "push",
-        event: { id: assistantId, role: "assistant", text: "", streaming: true },
-      });
+      // Refs are the source of truth for accumulated streaming text; the React
+      // state copy below is only for rendering and gets updated on flush.
+      const streamRef: StreamingState = { id: assistantId, text: "", reasoning: "" };
+      const contentBuf = { current: "" };
+      const reasoningBuf = { current: "" };
+
+      setStreaming({ id: assistantId, role: "assistant", text: "", streaming: true });
+      setBusy(true);
+
+      const flush = () => {
+        if (!contentBuf.current && !reasoningBuf.current) return;
+        streamRef.text += contentBuf.current;
+        streamRef.reasoning += reasoningBuf.current;
+        contentBuf.current = "";
+        reasoningBuf.current = "";
+        setStreaming({
+          id: assistantId,
+          role: "assistant",
+          text: streamRef.text,
+          reasoning: streamRef.reasoning || undefined,
+          streaming: true,
+        });
+      };
+      const timer = setInterval(flush, FLUSH_INTERVAL_MS);
+
       try {
         for await (const ev of loop.step(text)) {
           writeTranscript(ev);
           if (ev.role === "assistant_delta") {
-            if (ev.content) {
-              dispatch({ type: "append_assistant", id: assistantId, delta: ev.content });
-            }
-            if (ev.reasoningDelta) {
-              dispatch({ type: "append_reasoning", id: assistantId, delta: ev.reasoningDelta });
-            }
-          }
-          if (ev.role === "assistant_final") {
+            if (ev.content) contentBuf.current += ev.content;
+            if (ev.reasoningDelta) reasoningBuf.current += ev.reasoningDelta;
+          } else if (ev.role === "assistant_final") {
+            flush();
             const repairNote = ev.repair ? describeRepair(ev.repair) : "";
-            dispatch({
-              type: "finalize_assistant",
-              id: assistantId,
-              stats: ev.stats,
-              repair: repairNote || undefined,
-            });
-          }
-          if (ev.role === "tool") {
-            dispatch({
-              type: "push",
-              event: {
+            setStreaming(null);
+            setHistorical((prev) => [
+              ...prev,
+              {
+                id: assistantId,
+                role: "assistant",
+                text: ev.content || streamRef.text,
+                reasoning: streamRef.reasoning || undefined,
+                stats: ev.stats,
+                repair: repairNote || undefined,
+                streaming: false,
+              },
+            ]);
+          } else if (ev.role === "tool") {
+            flush();
+            setHistorical((prev) => [
+              ...prev,
+              {
                 id: `t-${Date.now()}-${Math.random()}`,
                 role: "tool",
                 text: ev.content,
                 toolName: ev.toolName,
               },
-            });
-          }
-          if (ev.role === "error") {
-            dispatch({
-              type: "push",
-              event: { id: `e-${Date.now()}`, role: "error", text: ev.error ?? ev.content },
-            });
+            ]);
+          } else if (ev.role === "error") {
+            setHistorical((prev) => [
+              ...prev,
+              { id: `e-${Date.now()}`, role: "error", text: ev.error ?? ev.content },
+            ]);
           }
         }
+        flush();
       } finally {
+        clearInterval(timer);
+        setStreaming(null);
         setSummary(loop.stats.summary());
         setBusy(false);
       }
@@ -176,9 +173,12 @@ export function App({ model, system, transcript }: AppProps) {
   return (
     <Box flexDirection="column">
       <StatsPanel summary={summary} model={model} prefixHash={prefixHash} />
-      <Box flexDirection="column" marginY={1}>
-        <EventLog events={events} />
-      </Box>
+      <Static items={historical}>{(item) => <EventRow key={item.id} event={item} />}</Static>
+      {streaming ? (
+        <Box marginY={1}>
+          <EventRow event={streaming} />
+        </Box>
+      ) : null}
       <PromptInput value={input} onChange={setInput} onSubmit={handleSubmit} disabled={busy} />
     </Box>
   );
