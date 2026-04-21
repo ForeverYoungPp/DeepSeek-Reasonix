@@ -1,5 +1,5 @@
+import { loadDotenv } from "../../env.js";
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
-import { loadDotenv } from "../env.js";
 
 export interface RunOptions {
   task: string;

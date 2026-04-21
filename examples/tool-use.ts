@@ -4,7 +4,10 @@ import {
   DeepSeekClient,
   ImmutablePrefix,
   ToolRegistry,
+  loadDotenv,
 } from "../src/index.js";
+
+loadDotenv();
 
 const tools = new ToolRegistry();
 tools.register<{ a: number; b: number }, number>({

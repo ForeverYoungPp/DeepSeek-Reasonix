@@ -1,5 +1,12 @@
 /** Minimal example: one-shot, non-streaming. Needs DEEPSEEK_API_KEY. */
-import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../src/index.js";
+import {
+  CacheFirstLoop,
+  DeepSeekClient,
+  ImmutablePrefix,
+  loadDotenv,
+} from "../src/index.js";
+
+loadDotenv();
 
 async function main() {
   const client = new DeepSeekClient();

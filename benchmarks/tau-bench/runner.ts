@@ -8,7 +8,15 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix, type SessionSummary } from "../../src/index.js";
+import {
+  CacheFirstLoop,
+  DeepSeekClient,
+  ImmutablePrefix,
+  type SessionSummary,
+  loadDotenv,
+} from "../../src/index.js";
+
+loadDotenv();
 
 interface TauTask {
   id: string;

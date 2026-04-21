@@ -36,6 +36,8 @@ export type {
 export { harvest, emptyPlanState, isPlanStateEmpty } from "./harvest.js";
 export type { TypedPlanState } from "./harvest.js";
 
+export { loadDotenv } from "./env.js";
+
 export type {
   ChatMessage,
   ToolCall,

@@ -1,6 +1,6 @@
 import { render } from "ink";
 import React from "react";
-import { loadDotenv } from "../env.js";
+import { loadDotenv } from "../../env.js";
 import { App } from "../ui/App.js";
 
 export interface ChatOptions {
