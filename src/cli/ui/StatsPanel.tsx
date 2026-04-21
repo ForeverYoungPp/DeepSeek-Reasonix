@@ -6,12 +6,21 @@ export interface StatsPanelProps {
   summary: SessionSummary;
   model: string;
   prefixHash: string;
+  harvestOn?: boolean;
+  branchBudget?: number;
 }
 
-export function StatsPanel({ summary, model, prefixHash }: StatsPanelProps) {
+export function StatsPanel({
+  summary,
+  model,
+  prefixHash,
+  harvestOn,
+  branchBudget,
+}: StatsPanelProps) {
   const hitPct = (summary.cacheHitRatio * 100).toFixed(1);
   const hitColor =
     summary.cacheHitRatio >= 0.7 ? "green" : summary.cacheHitRatio >= 0.4 ? "yellow" : "red";
+  const branchOn = (branchBudget ?? 1) > 1;
   return (
     <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
@@ -23,8 +32,10 @@ export function StatsPanel({ summary, model, prefixHash }: StatsPanelProps) {
           <Text color="yellow">{model}</Text>
           <Text dimColor> · prefix </Text>
           <Text dimColor>{prefixHash}</Text>
+          {harvestOn ? <Text color="magenta"> · harvest</Text> : null}
+          {branchOn ? <Text color="blue"> · branch{branchBudget}</Text> : null}
         </Text>
-        <Text dimColor>turns {summary.turns}</Text>
+        <Text dimColor>turns {summary.turns} · type /help</Text>
       </Box>
       <Box marginTop={1} gap={3}>
         <Text>

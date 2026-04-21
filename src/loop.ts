@@ -67,22 +67,34 @@ export interface CacheFirstLoopOptions {
  *
  * Yields a stream of events so a TUI can render progressively.
  */
+export interface ReconfigurableOptions {
+  model?: string;
+  harvest?: boolean | HarvestOptions;
+  branch?: number | BranchOptions;
+  stream?: boolean;
+}
+
 export class CacheFirstLoop {
   readonly client: DeepSeekClient;
   readonly prefix: ImmutablePrefix;
   readonly tools: ToolRegistry;
-  readonly model: string;
   readonly maxToolIters: number;
-  readonly stream: boolean;
-  readonly harvestEnabled: boolean;
-  readonly harvestOptions: HarvestOptions;
-  readonly branchEnabled: boolean;
-  readonly branchOptions: BranchOptions;
   readonly log = new AppendOnlyLog();
   readonly scratch = new VolatileScratch();
   readonly stats = new SessionStats();
   readonly repair: ToolCallRepair;
+
+  // Mutable via configure() — slash commands in the TUI / library callers tweak
+  // these mid-session so users don't have to restart to try harvest or branch.
+  model: string;
+  stream: boolean;
+  harvestEnabled: boolean;
+  harvestOptions: HarvestOptions;
+  branchEnabled: boolean;
+  branchOptions: BranchOptions;
+
   private _turn = 0;
+  private _streamPreference: boolean;
 
   constructor(opts: CacheFirstLoopOptions) {
     this.client = opts.client;
@@ -113,10 +125,48 @@ export class CacheFirstLoop {
         : (this.branchOptions.harvestOptions ?? {});
 
     // Streaming is incompatible with branching (need all samples to select).
-    this.stream = this.branchEnabled ? false : (opts.stream ?? true);
+    this._streamPreference = opts.stream ?? true;
+    this.stream = this.branchEnabled ? false : this._streamPreference;
 
     const allowedNames = new Set([...this.prefix.toolSpecs.map((s) => s.function.name)]);
     this.repair = new ToolCallRepair({ allowedToolNames: allowedNames });
+  }
+
+  /**
+   * Reconfigure model/harvest/branch/stream mid-session. The loop's log,
+   * scratch, and stats are preserved — only the per-turn behavior changes.
+   * Used by the TUI's slash commands and by library callers who want to
+   * flip a knob between turns.
+   */
+  configure(opts: ReconfigurableOptions): void {
+    if (opts.model !== undefined) this.model = opts.model;
+    if (opts.stream !== undefined) this._streamPreference = opts.stream;
+
+    if (opts.branch !== undefined) {
+      if (typeof opts.branch === "number") {
+        this.branchOptions = { budget: opts.branch };
+      } else if (opts.branch && typeof opts.branch === "object") {
+        this.branchOptions = opts.branch;
+      } else {
+        this.branchOptions = {};
+      }
+      this.branchEnabled = (this.branchOptions.budget ?? 1) > 1;
+    }
+
+    if (opts.harvest !== undefined) {
+      const want =
+        opts.harvest === true || (typeof opts.harvest === "object" && opts.harvest !== null);
+      this.harvestEnabled = want || this.branchEnabled;
+      if (typeof opts.harvest === "object" && opts.harvest !== null) {
+        this.harvestOptions = opts.harvest;
+      }
+    } else if (this.branchEnabled) {
+      // branch turned on without explicit harvest → force it on
+      this.harvestEnabled = true;
+    }
+
+    // Branching always forces non-streaming; otherwise honor preference.
+    this.stream = this.branchEnabled ? false : this._streamPreference;
   }
 
   private buildMessages(pendingUser: string | null): ChatMessage[] {

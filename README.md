@@ -16,7 +16,10 @@ Reasonix leans into them.
 
 ```bash
 npx reasonix chat          # first run prompts for your DeepSeek key
+                           # inside the TUI, type /help for everything else
 ```
+
+No flag soup. All feature toggles live behind slash commands in the TUI.
 
 ---
 
@@ -50,23 +53,36 @@ Measured on live DeepSeek API:
 ### CLI
 
 ```bash
-# Just chat
-npx reasonix chat
+npx reasonix chat                # just chat — everything else is inside
+npx reasonix run "ask anything"  # one-shot, streams to stdout
+npx reasonix stats session.jsonl # read back a saved transcript
+```
 
-# Pick a model (default: deepseek-chat)
-npx reasonix chat -m deepseek-reasoner
+### Inside the chat — slash commands
 
-# Harvest R1's thinking into structured plan state
-npx reasonix chat -m deepseek-reasoner --harvest
+```
+/help                    list all commands
+/status                  show model / harvest / branch / stream state
+/model deepseek-reasoner switch to R1 for thinking-heavy tasks
+/model deepseek-chat     switch back
+/harvest on              Pillar 2: parse R1 reasoning into typed plan state
+/harvest off             disable (saves one cheap V3 call per turn)
+/branch 3                run 3 parallel samples per turn, pick most confident
+/branch off              disable branching
+/clear                   clear displayed history (log is kept)
+/exit                    quit
+```
 
-# Self-consistency: 3 parallel samples, pick the most confident
-npx reasonix chat -m deepseek-reasoner --branch 3
+The header updates live: you'll see `harvest · branch3` appear next to the
+model name once you turn those on. `turns N · type /help` is always in the
+top-right corner.
 
-# One-shot, streams to stdout
-npx reasonix run "In one sentence, what is prompt caching?"
+### Flags (for automation / CI)
 
-# Read back a saved transcript
-npx reasonix stats session.jsonl
+The same knobs are also available as CLI flags if you're scripting:
+
+```bash
+npx reasonix chat -m deepseek-reasoner --harvest --branch 3 --transcript session.jsonl
 ```
 
 ### Library

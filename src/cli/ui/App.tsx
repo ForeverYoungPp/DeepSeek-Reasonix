@@ -7,6 +7,7 @@ import type { SessionSummary } from "../../telemetry.js";
 import { type DisplayEvent, EventRow } from "./EventLog.js";
 import { PromptInput } from "./PromptInput.js";
 import { StatsPanel } from "./StatsPanel.js";
+import { handleSlash, parseSlash } from "./slash.js";
 
 export interface AppProps {
   model: string;
@@ -82,13 +83,28 @@ export function App({ model, system, transcript, harvest, branch }: AppProps) {
       const text = raw.trim();
       if (!text || busy) return;
       setInput("");
-      if (text === "/exit" || text === "/quit") {
-        transcriptRef.current?.end();
-        exit();
-        return;
-      }
-      if (text === "/clear") {
-        setHistorical([]);
+      const slash = parseSlash(text);
+      if (slash) {
+        const result = handleSlash(slash.cmd, slash.args, loop);
+        if (result.exit) {
+          transcriptRef.current?.end();
+          exit();
+          return;
+        }
+        if (result.clear) {
+          setHistorical([]);
+          return;
+        }
+        if (result.info) {
+          setHistorical((prev) => [
+            ...prev,
+            {
+              id: `sys-${Date.now()}`,
+              role: "info",
+              text: result.info!,
+            },
+          ]);
+        }
         return;
       }
 
@@ -186,7 +202,13 @@ export function App({ model, system, transcript, harvest, branch }: AppProps) {
 
   return (
     <Box flexDirection="column">
-      <StatsPanel summary={summary} model={model} prefixHash={prefixHash} />
+      <StatsPanel
+        summary={summary}
+        model={loop.model}
+        prefixHash={prefixHash}
+        harvestOn={loop.harvestEnabled}
+        branchBudget={loop.branchOptions.budget}
+      />
       <Static items={historical}>{(item) => <EventRow key={item.id} event={item} />}</Static>
       {streaming ? (
         <Box marginY={1}>
