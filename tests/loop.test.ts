@@ -255,11 +255,13 @@ describe("CacheFirstLoop (non-streaming)", () => {
     for await (const ev of loop.step("go")) {
       if (ev.role === "warning") warnings.push(ev.content);
     }
-    // Exactly one warning should fire (guard against the once-per-turn flag
-    // regressing). Content must mention the X/N count and "Esc".
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toMatch(/\d+\/4 tool calls used/);
-    expect(warnings[0]).toMatch(/Esc/);
+    // Identical fixture calls also trip the storm breaker in 0.4.19+,
+    // which emits its own warning. Filter for the iter-budget warning
+    // specifically — that's what this test guards (once-per-turn flag).
+    const iterBudgetWarnings = warnings.filter((w) => /tool calls used/.test(w));
+    expect(iterBudgetWarnings).toHaveLength(1);
+    expect(iterBudgetWarnings[0]).toMatch(/\d+\/4 tool calls used/);
+    expect(iterBudgetWarnings[0]).toMatch(/Esc/);
   });
 
   it("abort() mid-step stops immediately without a follow-up API call", async () => {

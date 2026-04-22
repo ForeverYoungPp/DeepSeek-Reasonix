@@ -76,4 +76,22 @@ describe("ToolCallRepair pipeline", () => {
     expect(calls.length).toBe(1);
     expect(report.scavenged).toBe(1);
   });
+
+  it("resetStorm clears the repeat-window so post-reset calls aren't suppressed", () => {
+    const repair = new ToolCallRepair({
+      allowedToolNames: new Set(["x"]),
+      stormWindow: 6,
+      stormThreshold: 3,
+    });
+    // Build up to the storm threshold — third identical call would be suppressed.
+    for (let i = 0; i < 2; i++) {
+      repair.process([call(`c${i}`, "x", "{}")], null);
+    }
+    // Mid-turn reset (what step() does on each new user message).
+    repair.resetStorm();
+    // With a fresh window the next call passes through — no suppression.
+    const { calls, report } = repair.process([call("c-after", "x", "{}")], null);
+    expect(calls.length).toBe(1);
+    expect(report.stormsBroken).toBe(0);
+  });
 });

@@ -5,12 +5,17 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.19] — 2026-04-22
 
-**Headline:** Windows shell hotfix. `reasonix code` now runs `npm`,
-`npx`, `tsc`, `yarn`, `pnpm`, `bun`, `pytest`, and every other
-`.cmd` / `.bat` wrapper on Windows — both under Node 18/20 (broken
-by missing PATHEXT resolution) and Node 21.7.3+/24 (broken by the
-CVE-2024-27980 prohibition on direct `.cmd`/`.bat` spawns with
-`shell: false`). Unix behavior unchanged.
+**Headline:** Windows shell hotfix + StormBreaker visibility.
+`reasonix code` now runs `npm`, `npx`, `tsc`, `yarn`, `pnpm`, `bun`,
+`pytest`, and every other `.cmd` / `.bat` wrapper on Windows — both
+under Node 18/20 (broken by missing PATHEXT resolution) and Node
+21.7.3+/24 (broken by CVE-2024-27980's prohibition on direct
+`.cmd`/`.bat` spawns with `shell: false`). Unix behavior unchanged.
+Plus: the StormBreaker anti-loop-detector no longer silently halts
+a turn — when it fires it emits a visible warning row explaining
+what was suppressed and what the user should do next, and its
+sliding window resets on each new user message so a new intent
+doesn't inherit the previous turn's repeat patterns.
 
 ### Fixed
 
@@ -50,7 +55,32 @@ CVE-2024-27980 prohibition on direct `.cmd`/`.bat` spawns with
   (`npm install`, paths with spaces, args containing
   `& | < > ^`, empty strings, embedded double quotes).
 
-### Tests (+21, suite 566 → 587)
+- **Silent storm-break**. When `StormBreaker` caught a repeated
+  `(tool, args)` pattern it dropped the offending call but emitted
+  nothing user-visible beyond a small `[repair] broke 1 storm` note
+  on the assistant row. If the suppressed call was the only tool
+  call of the turn, the turn just ended — no explanation of why
+  nothing happened. Now the loop yields a dedicated `warning` event
+  (same channel as Esc-abort and budget warnings) with an
+  actionable message, distinguishing "all calls suppressed (stuck
+  retry)" from "some calls suppressed" cases.
+- **StormBreaker state bleeds across user turns**. The sliding
+  window of recent signatures persisted for the lifetime of the
+  loop, so a stuck pattern from an earlier intent could false-
+  positive against the user's legitimate new "try again with
+  different input" request. `CacheFirstLoop.step()` now calls
+  `repair.resetStorm()` on every new user turn — the window
+  repopulates naturally as the new turn's tool calls fire, and
+  genuine repeats still trip after the usual 3-in-a-row pattern.
+
+### Added
+
+- **`ToolCallRepair.resetStorm()`** — exposes StormBreaker.reset
+  through the repair facade. Called by the loop at each user turn;
+  library consumers that drive `repair.process` manually can use it
+  too if they wrap their own turn semantics.
+
+### Tests (+22, suite 566 → 588)
 
 - `tests/shell-tools.test.ts` (+21) — `resolveExecutable` on
   non-Windows (passthrough), PATHEXT walk (first-hit ordering,
@@ -61,6 +91,11 @@ CVE-2024-27980 prohibition on direct `.cmd`/`.bat` spawns with
   → `""`). `prepareSpawn` (unix passthrough, `.cmd` wraps via
   cmd.exe, `.bat` wraps too, `.exe` direct, metachar args quoted,
   PATHEXT miss falls through).
+- `tests/repair/pipeline.test.ts` (+1) — `resetStorm` clears the
+  repeat-window so post-reset calls aren't suppressed.
+- `tests/loop.test.ts` — the iter-budget warning test refined to
+  filter by the iter-specific pattern, since identical fixture
+  calls now also trip the (correct) storm warning.
 
 ### Internals
 
@@ -70,6 +105,11 @@ CVE-2024-27980 prohibition on direct `.cmd`/`.bat` spawns with
   `spawnOverrides` it receives are platform-normalized.
 - Existing allowlist + `readOnlyCheck` plan-mode gate + timeout /
   output-cap / AbortSignal wiring is untouched.
+- `CacheFirstLoop.step()` now resets the StormBreaker at the top of
+  each turn AND emits a `warning` event after `repair.process()`
+  when `report.stormsBroken > 0`. The existing `repair` field on
+  `assistant_final` still carries the count for historical records
+  / transcripts.
 
 ---
 

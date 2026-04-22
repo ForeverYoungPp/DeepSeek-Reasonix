@@ -438,6 +438,11 @@ export class CacheFirstLoop {
   async *step(userInput: string): AsyncGenerator<LoopEvent> {
     this._turn++;
     this.scratch.reset();
+    // A fresh user turn is a new intent — don't let StormBreaker's
+    // old sliding window of (name, args) signatures keep blocking
+    // calls that are now legitimately on-task. The window repopulates
+    // naturally as this turn's tool calls flow through.
+    this.repair.resetStorm();
     // Fresh controller for this turn: the prior step's signal has
     // already fired (or stayed clean); either way we don't want its
     // state to bleed into the new turn.
@@ -730,6 +735,25 @@ export class CacheFirstLoop {
         repair: report,
         branch: branchSummary,
       };
+
+      // Loud signal when the storm breaker caught a repeat pattern.
+      // The `repair` field on assistant_final already carries the
+      // count as a subtext on the assistant row, but a dedicated
+      // warning row is far more noticeable — and critical when ALL
+      // calls were suppressed, because the turn then ends with no
+      // visible explanation of why nothing happened.
+      if (report.stormsBroken > 0) {
+        const noteTail = report.notes.length ? ` — ${report.notes[report.notes.length - 1]}` : "";
+        const allSuppressed = repairedCalls.length === 0 && toolCalls.length > 0;
+        const phrase = allSuppressed
+          ? `stopped the model from calling the same tool with identical args repeatedly (all ${toolCalls.length} call(s) this turn were already in the recent-repeat window). Likely a stuck retry — reword your instruction, rule out the underlying blocker, or try /retry after fixing it`
+          : `suppressed ${report.stormsBroken} repeat tool call(s) that had fired 3+ times with identical args in a sliding window`;
+        yield {
+          turn: this._turn,
+          role: "warning",
+          content: `${phrase}${noteTail}`,
+        };
+      }
 
       if (repairedCalls.length === 0) {
         yield { turn: this._turn, role: "done", content: assistantContent };

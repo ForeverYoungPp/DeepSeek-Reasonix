@@ -46,6 +46,17 @@ export class ToolCallRepair {
     this.storm = new StormBreaker(opts.stormWindow ?? 6, opts.stormThreshold ?? 3);
   }
 
+  /**
+   * Drop the StormBreaker's sliding window of recent (name, args)
+   * signatures. Called at the start of every user turn — a fresh user
+   * message is a new intent, so carrying old repetition state into it
+   * would turn a valid "try again with different input" flow into a
+   * false-positive block.
+   */
+  resetStorm(): void {
+    this.storm.reset();
+  }
+
   process(
     declaredCalls: ToolCall[],
     reasoningContent: string | null,
