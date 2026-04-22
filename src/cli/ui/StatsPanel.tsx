@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import React from "react";
+import { DEEPSEEK_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS } from "../../telemetry.js";
 import type { SessionSummary } from "../../telemetry.js";
 
 export interface StatsPanelProps {
@@ -21,6 +22,11 @@ export function StatsPanel({
   const hitColor =
     summary.cacheHitRatio >= 0.7 ? "green" : summary.cacheHitRatio >= 0.4 ? "yellow" : "red";
   const branchOn = (branchBudget ?? 1) > 1;
+
+  const ctxMax = DEEPSEEK_CONTEXT_TOKENS[model] ?? DEFAULT_CONTEXT_TOKENS;
+  const ctxRatio = summary.lastPromptTokens / ctxMax;
+  const ctxColor = ctxRatio >= 0.8 ? "red" : ctxRatio >= 0.5 ? "yellow" : undefined;
+
   return (
     <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
@@ -58,7 +64,33 @@ export function StatsPanel({
             {summary.savingsVsClaudePct.toFixed(1)}%
           </Text>
         </Text>
+        {summary.lastPromptTokens > 0 ? (
+          <Text>
+            <Text dimColor>ctx </Text>
+            <Text color={ctxColor} bold={ctxColor !== undefined}>
+              {formatTokens(summary.lastPromptTokens)}/{formatTokens(ctxMax)}
+            </Text>
+            <Text dimColor> ({(ctxRatio * 100).toFixed(0)}%)</Text>
+            {ctxRatio >= 0.8 ? (
+              <Text color="red" bold>
+                {" "}
+                · /compact
+              </Text>
+            ) : null}
+          </Text>
+        ) : null}
       </Box>
     </Box>
   );
+}
+
+/**
+ * Compact integer formatter: 1234 → "1.2k", 131072 → "131k". Keeps the
+ * panel narrow enough to fit on 80-col terminals even when the context
+ * is near full.
+ */
+function formatTokens(n: number): string {
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return k >= 100 ? `${k.toFixed(0)}k` : `${k.toFixed(1)}k`;
 }

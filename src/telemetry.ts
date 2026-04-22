@@ -12,6 +12,20 @@ export const DEEPSEEK_PRICING: Record<
 /** Reference Claude Sonnet 4.6 pricing (USD per 1M tokens). */
 export const CLAUDE_SONNET_PRICING = { input: 3.0, output: 15.0 };
 
+/**
+ * Maximum prompt-side context window per DeepSeek model, in tokens.
+ * Both V3 (`deepseek-chat`) and R1 (`deepseek-reasoner`) currently expose
+ * a 131,072-token prompt limit per the OpenAPI spec; completion caps
+ * differ but don't affect the prompt budget the StatsPanel shows.
+ */
+export const DEEPSEEK_CONTEXT_TOKENS: Record<string, number> = {
+  "deepseek-chat": 131_072,
+  "deepseek-reasoner": 131_072,
+};
+
+/** Fallback when the caller's model id isn't in the table — safe lower bound. */
+export const DEFAULT_CONTEXT_TOKENS = 131_072;
+
 export function costUsd(model: string, usage: Usage): number {
   const p = DEEPSEEK_PRICING[model];
   if (!p) return 0;
@@ -45,6 +59,13 @@ export interface SessionSummary {
   claudeEquivalentUsd: number;
   savingsVsClaudePct: number;
   cacheHitRatio: number;
+  /**
+   * Most recent turn's prompt-token count. Used by the TUI's context
+   * gauge: we can't know the next call's cost without making it, but
+   * the last turn's prompt tokens is the floor (next call is last
+   * prompt + user delta + any new tool outputs).
+   */
+  lastPromptTokens: number;
 }
 
 export class SessionStats {
@@ -88,12 +109,14 @@ export class SessionStats {
   }
 
   summary(): SessionSummary {
+    const last = this.turns[this.turns.length - 1];
     return {
       turns: this.turns.length,
       totalCostUsd: round(this.totalCost, 6),
       claudeEquivalentUsd: round(this.totalClaudeEquivalent, 6),
       savingsVsClaudePct: round(this.savingsVsClaude * 100, 2),
       cacheHitRatio: round(this.aggregateCacheHitRatio, 4),
+      lastPromptTokens: last?.usage.promptTokens ?? 0,
     };
   }
 }

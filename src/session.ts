@@ -24,6 +24,7 @@ import {
   readdirSync,
   statSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -109,6 +110,26 @@ export function deleteSession(name: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Overwrite the session file with a fresh message list. Used by
+ * `/compact` so the compacted in-memory log persists across restarts
+ * instead of being re-healed from a huge on-disk file every launch.
+ * We accept the brief non-atomic window between truncate and write —
+ * worst case: a concurrent crash loses the session, which is what
+ * `/forget` would have done anyway.
+ */
+export function rewriteSession(name: string, messages: ChatMessage[]): void {
+  const path = sessionPath(name);
+  mkdirSync(dirname(path), { recursive: true });
+  const body = messages.map((m) => JSON.stringify(m)).join("\n");
+  writeFileSync(path, body ? `${body}\n` : "", "utf8");
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    /* chmod not supported */
   }
 }
 

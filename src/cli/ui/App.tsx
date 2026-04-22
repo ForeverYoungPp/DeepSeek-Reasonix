@@ -62,6 +62,7 @@ export function App({
     claudeEquivalentUsd: 0,
     savingsVsClaudePct: 0,
     cacheHitRatio: 0,
+    lastPromptTokens: 0,
   });
 
   const transcriptRef = useRef<WriteStream | null>(null);
@@ -295,7 +296,7 @@ function CommandStrip() {
   return (
     <Box paddingX={2}>
       <Text dimColor>
-        /help · /preset {"<fast|smart|max>"} · /mcp · /sessions · /setup · /clear · /exit
+        /help · /preset {"<fast|smart|max>"} · /mcp · /compact · /sessions · /setup · /clear · /exit
       </Text>
     </Box>
   );

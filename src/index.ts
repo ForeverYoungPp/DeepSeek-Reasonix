@@ -3,7 +3,7 @@
 export { DeepSeekClient, Usage } from "./client.js";
 export type { ChatResponse, StreamChunk, DeepSeekClientOptions } from "./client.js";
 
-export { CacheFirstLoop } from "./loop.js";
+export { CacheFirstLoop, formatLoopError, healLoadedMessages } from "./loop.js";
 export type {
   CacheFirstLoopOptions,
   LoopEvent,
@@ -140,4 +140,4 @@ export type {
   JSONSchema,
 } from "./types.js";
 
-export const VERSION = "0.3.0-alpha.6";
+export const VERSION = "0.3.0";

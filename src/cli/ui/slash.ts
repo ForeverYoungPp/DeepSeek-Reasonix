@@ -62,6 +62,7 @@ export function handleSlash(
           "  /branch <N|off>          run N parallel samples (N>=2), pick most confident",
           "  /mcp                     list MCP servers + tools attached to this session",
           "  /setup                   (exit + reconfigure) → run `reasonix setup`",
+          "  /compact [cap]           shrink large tool results in history (default 4k/result)",
           "  /sessions                list saved sessions (current is marked with ▸)",
           "  /forget                  delete the current session from disk",
           "  /clear                   clear displayed history (log + session kept)",
@@ -109,6 +110,25 @@ export function handleSlash(
           "To reconfigure (preset, MCP servers, API key), exit this chat and run " +
           "`reasonix setup`. Changes take effect on next launch.",
       };
+
+    case "compact": {
+      // Manual companion to the automatic heal-on-load. Re-applies
+      // truncation with a tighter cap (4k chars per tool result) and
+      // rewrites the session file so the shrink persists. Useful when
+      // the ctx gauge in StatsPanel goes yellow/red mid-session and
+      // the user wants to keep chatting without /forget'ing everything.
+      const tight = Number.parseInt(args[0] ?? "", 10);
+      const cap = Number.isFinite(tight) && tight >= 500 ? tight : 4000;
+      const { healedCount, charsSaved } = loop.compact(cap);
+      if (healedCount === 0) {
+        return {
+          info: `▸ nothing to compact — no tool result in history exceeds ${cap.toLocaleString()} chars.`,
+        };
+      }
+      return {
+        info: `▸ compacted ${healedCount} tool result(s), saved ${charsSaved.toLocaleString()} chars (~${Math.round(charsSaved / 4).toLocaleString()} tokens). Session file rewritten.`,
+      };
+    }
 
     case "sessions": {
       const items = listSessions();

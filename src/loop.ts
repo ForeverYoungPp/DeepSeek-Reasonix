@@ -6,9 +6,10 @@ import {
   runBranches,
 } from "./consistency.js";
 import { type HarvestOptions, type TypedPlanState, emptyPlanState, harvest } from "./harvest.js";
+import { DEFAULT_MAX_RESULT_CHARS, truncateForModel } from "./mcp/registry.js";
 import { AppendOnlyLog, type ImmutablePrefix, VolatileScratch } from "./memory.js";
 import { type RepairReport, ToolCallRepair } from "./repair/index.js";
-import { appendSessionMessage, loadSessionMessages } from "./session.js";
+import { appendSessionMessage, loadSessionMessages, rewriteSession } from "./session.js";
 import { SessionStats, type TurnStats } from "./telemetry.js";
 import { ToolRegistry } from "./tools.js";
 import type { ChatMessage, ToolCall } from "./types.js";
@@ -165,14 +166,60 @@ export class CacheFirstLoop {
 
     // Session resume: pre-load prior messages into the log if a session name
     // is provided. New messages appended to the log are also persisted.
+    //
+    // Heal-on-load: if a previous run (or a pre-alpha.6 client) stored a
+    // tool result bigger than the cap, the next API call would blow past
+    // DeepSeek's 131k-token limit *before the user even types anything*.
+    // Truncating here lets the user pick up their session history without
+    // losing the conversational context around the oversized call.
     this.sessionName = opts.session ?? null;
     if (this.sessionName) {
       const prior = loadSessionMessages(this.sessionName);
-      for (const msg of prior) this.log.append(msg);
-      this.resumedMessageCount = prior.length;
+      const { messages, healedCount, healedFrom } = healLoadedMessages(
+        prior,
+        DEFAULT_MAX_RESULT_CHARS,
+      );
+      for (const msg of messages) this.log.append(msg);
+      this.resumedMessageCount = messages.length;
+      if (healedCount > 0) {
+        process.stderr.write(
+          `▸ session "${this.sessionName}": healed ${healedCount} oversized tool result(s) (was ${healedFrom.toLocaleString()} chars total). Old payloads were truncated to fit DeepSeek's context window; the conversation is preserved.\n`,
+        );
+      }
     } else {
       this.resumedMessageCount = 0;
     }
+  }
+
+  /**
+   * Shrink the log by re-truncating oversized tool results to a tighter
+   * cap, and persist the result back to disk so the next launch doesn't
+   * re-inherit a fat session file. Returns a summary the TUI can
+   * display.
+   *
+   * Only tool-role messages are touched (same rationale as
+   * {@link healLoadedMessages}). User and assistant messages carry
+   * authored intent we can't mechanically shrink without losing
+   * meaning.
+   */
+  compact(tightCapChars = 4000): { healedCount: number; charsSaved: number } {
+    const before = this.log.toMessages();
+    const { messages, healedCount, healedFrom } = healLoadedMessages(before, tightCapChars);
+    const afterBytes = messages
+      .filter((m) => m.role === "tool")
+      .reduce((s, m) => s + (typeof m.content === "string" ? m.content.length : 0), 0);
+    const charsSaved = healedFrom - afterBytes;
+    if (healedCount > 0) {
+      this.log.compactInPlace(messages);
+      if (this.sessionName) {
+        try {
+          rewriteSession(this.sessionName, messages);
+        } catch {
+          /* disk full or perms — compaction still applies in-memory */
+        }
+      }
+    }
+    return { healedCount, charsSaved };
   }
 
   private appendAndPersist(message: ChatMessage): void {
@@ -483,6 +530,29 @@ function summarizeBranch(chosen: BranchSample, samples: BranchSample[]): BranchS
 }
 
 /**
+ * Truncate any tool-role message whose content exceeds the cap. User
+ * and assistant messages are left alone because (a) they're almost
+ * always small, (b) truncating user prompts would corrupt conversational
+ * intent in a way the user didn't author. Exported for tests.
+ */
+export function healLoadedMessages(
+  messages: ChatMessage[],
+  maxChars: number,
+): { messages: ChatMessage[]; healedCount: number; healedFrom: number } {
+  let healedCount = 0;
+  let healedFrom = 0;
+  const out = messages.map((msg) => {
+    if (msg.role !== "tool") return msg;
+    const content = typeof msg.content === "string" ? msg.content : "";
+    if (content.length <= maxChars) return msg;
+    healedCount += 1;
+    healedFrom += content.length;
+    return { ...msg, content: truncateForModel(content, maxChars) };
+  });
+  return { messages: out, healedCount, healedFrom };
+}
+
+/**
  * Annotate the `DeepSeek 400: … maximum context length …` error the API
  * returns when a session's history has grown past 131,072 tokens. The
  * raw message is a JSON blob; we surface a short actionable hint on top
@@ -498,7 +568,7 @@ export function formatLoopError(err: Error): string {
     const requested = reqMatch
       ? `${Number(reqMatch[1]).toLocaleString()} tokens`
       : "too many tokens";
-    return `Context overflow (DeepSeek 400): session history is ${requested}, past the 131,072-token limit. This usually means a tool (e.g. read_file) returned a huge payload that's now poisoning every subsequent turn.\n  → Run /forget to delete this session and start fresh, or /clear to drop the displayed history. New MCP tool calls are now capped at 32k chars to prevent this (v0.3.0-alpha.6+).`;
+    return `Context overflow (DeepSeek 400): session history is ${requested}, past the 131,072-token limit. Usually this means a single tool call returned a huge payload. v0.3.0-alpha.6+ caps new tool results at 32k chars, AND auto-heals oversized history on session load — restart Reasonix and this session should come back trimmed. If it still overflows, run /forget (delete the session) or /clear (drop the displayed history) to start fresh.`;
   }
   return msg;
 }

@@ -151,12 +151,14 @@ function summarizeTurns(turns: TurnStats[]): SessionSummary {
   }
   const cacheHitRatio = hit + miss > 0 ? hit / (hit + miss) : 0;
   const savingsVsClaude = totalClaude > 0 ? 1 - totalCost / totalClaude : 0;
+  const lastTurn = turns[turns.length - 1];
   return {
     turns: turns.length,
     totalCostUsd: round(totalCost, 6),
     claudeEquivalentUsd: round(totalClaude, 6),
     savingsVsClaudePct: round(savingsVsClaude * 100, 2),
     cacheHitRatio: round(cacheHitRatio, 4),
+    lastPromptTokens: lastTurn?.usage.promptTokens ?? 0,
   };
 }
 

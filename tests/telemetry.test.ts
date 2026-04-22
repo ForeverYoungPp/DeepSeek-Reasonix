@@ -42,4 +42,13 @@ describe("SessionStats", () => {
     expect(stats.turns.length).toBe(2);
     expect(stats.aggregateCacheHitRatio).toBeCloseTo(240 / 300);
   });
+
+  it("summary.lastPromptTokens tracks the most recent turn only", () => {
+    const stats = new SessionStats();
+    expect(stats.summary().lastPromptTokens).toBe(0);
+    stats.record(1, "deepseek-chat", new Usage(5_000, 100, 5_100, 4_000, 1_000));
+    expect(stats.summary().lastPromptTokens).toBe(5_000);
+    stats.record(2, "deepseek-chat", new Usage(42_000, 200, 42_200, 40_000, 2_000));
+    expect(stats.summary().lastPromptTokens).toBe(42_000);
+  });
 });

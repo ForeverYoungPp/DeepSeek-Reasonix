@@ -55,6 +55,8 @@ export function ReplayApp({ meta, pages }: ReplayAppProps) {
     claudeEquivalentUsd: cumStats.claudeEquivalentUsd,
     savingsVsClaudePct: cumStats.savingsVsClaudePct,
     cacheHitRatio: cumStats.cacheHitRatio,
+    // Replay is read-only — no live last-turn prompt tokens to show.
+    lastPromptTokens: 0,
   };
 
   const prefixHash =

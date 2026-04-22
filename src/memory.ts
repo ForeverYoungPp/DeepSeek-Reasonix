@@ -50,6 +50,17 @@ export class AppendOnlyLog {
     for (const m of messages) this.append(m);
   }
 
+  /**
+   * Bulk-replace entries. Intentionally named to be hard to reach for —
+   * this is the one mutation path that breaks the log's append-only
+   * spirit, reserved for compaction flows (`/compact`) and recovery
+   * where the caller has consciously decided to drop old history. Any
+   * other use is almost certainly wrong; append() is what you want.
+   */
+  compactInPlace(replacement: ChatMessage[]): void {
+    this._entries = [...replacement];
+  }
+
   get entries(): readonly ChatMessage[] {
     return this._entries;
   }

@@ -140,6 +140,42 @@ describe("handleSlash", () => {
     expect(r.exit).toBeUndefined(); // /setup doesn't auto-exit — user presses /exit
   });
 
+  it("/compact says 'nothing to compact' when no tool messages exceed the cap", () => {
+    const loop = makeLoop();
+    loop.log.append({ role: "user", content: "hi" });
+    loop.log.append({ role: "tool", tool_call_id: "t1", content: "short result" });
+    const r = handleSlash("compact", [], loop);
+    expect(r.info).toMatch(/nothing to compact/);
+  });
+
+  it("/compact shrinks oversized tool results and reports chars saved", () => {
+    const loop = makeLoop();
+    loop.log.append({ role: "user", content: "read a big file" });
+    loop.log.append({ role: "tool", tool_call_id: "t1", content: "Z".repeat(20_000) });
+    const r = handleSlash("compact", [], loop);
+    expect(r.info).toMatch(/compacted 1 tool result/);
+    expect(r.info).toMatch(/saved/);
+    // After compaction the tool message length should be below the default 4k cap + envelope.
+    const toolEntry = loop.log.entries.find((m) => m.role === "tool");
+    expect(typeof toolEntry?.content).toBe("string");
+    expect((toolEntry?.content as string).length).toBeLessThan(5_000);
+  });
+
+  it("/compact honors a custom cap argument", () => {
+    const loop = makeLoop();
+    loop.log.append({ role: "tool", tool_call_id: "t1", content: "A".repeat(10_000) });
+    // 2000-char cap should shrink the 10k message
+    const r = handleSlash("compact", ["2000"], loop);
+    expect(r.info).toMatch(/compacted 1/);
+    const toolEntry = loop.log.entries.find((m) => m.role === "tool");
+    expect((toolEntry?.content as string).length).toBeLessThan(2_500);
+  });
+
+  it("/help mentions /compact", () => {
+    const r = handleSlash("help", [], makeLoop());
+    expect(r.info).toMatch(/\/compact/);
+  });
+
   it("/preset fast = deepseek-chat, no harvest, no branch", () => {
     const loop = makeLoop();
     handleSlash("model", ["deepseek-reasoner"], loop);

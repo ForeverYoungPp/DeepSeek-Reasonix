@@ -3,6 +3,66 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-04-21
+
+**Stable.** MCP (stdio + SSE, multi-server) + first-run wizard +
+context-safety (result cap + auto-heal + `/compact`). The `0.3.0-alpha.*`
+series graduates — `npm install reasonix@latest` now pulls this.
+
+### Added — since 0.2.2
+
+- **MCP client**: stdio + HTTP+SSE transports, tools/list + tools/call,
+  repeatable `--mcp` flag with `name=` namespacing, curated catalog
+  (`reasonix mcp list`), bundled demo server.
+- **`reasonix setup` wizard**: API key → preset pick → MCP multi-select
+  → per-server args → `~/.reasonix/config.json`. `npx reasonix` with
+  no args launches this on first run and drops into chat afterward.
+- **Config-backed defaults**: `preset`, `mcp`, `session` persist across
+  launches; CLI flags override; `--no-config` escape hatch.
+- **Context gauge in StatsPanel** (NEW this release): `ctx 42k/131k
+  (32%)` next to cache/cost. Turns yellow at 50%, red at 80%, adds a
+  `· /compact` nudge at red.
+- **`/compact` slash** (NEW this release): shrinks every oversized
+  tool result in the log with a tighter 4k cap (configurable via
+  `/compact <chars>`), rewrites the session file on disk. Reports
+  `▸ compacted N tool result(s), saved M chars (~T tokens)`.
+- **`/mcp` and `/setup` slashes**: inspect attached servers, point at
+  the reconfigure command.
+
+### Fixed — since 0.2.2
+
+- `shellSplit` no longer mangles Windows paths outside quotes.
+- Windows `--mcp "npx ..."` works via automatic `.cmd`/`.bat` resolution.
+- `@modelcontextprotocol/server-fetch` and `server-sqlite` removed from
+  the catalog (Python-only reference impls, not on npm).
+- One broken MCP server no longer kills the chat — per-spec failures
+  print `▸ MCP setup SKIPPED` and the session continues.
+- Tool results capped at 32k chars by default (override via
+  `bridgeMcpTools(client, { maxResultChars: N })`). Sessions from
+  pre-alpha.6 clients auto-heal on load — `▸ session "X": healed N
+  oversized tool result(s)…`.
+- DeepSeek 400 `maximum context length` errors now decorate with
+  actionable advice + pretty-printed token figure.
+
+### Tests
+
+- Suite: **276 passing** (was 224 at 0.2.2).
+- New files this release: `tests/resolve.test.ts`, `tests/wizard.test.ts`,
+  `tests/loop-error.test.ts`, `tests/mcp-sse.test.ts`.
+
+### Breaking changes
+
+None against a 0.2.2 user. The config schema grew, but missing fields
+fall through to defaults. MCP-specific API additions (`McpSpec` is now
+a discriminated union, `FlattenOptions`, `DEFAULT_MAX_RESULT_CHARS`)
+are all new surface.
+
+### Deprecated
+
+None.
+
+---
+
 ## [0.3.0-alpha.6] — 2026-04-21
 
 **Headline:** A single oversized tool result (e.g. `read_file` on a big
@@ -20,10 +80,20 @@ both ends: prevent it, and diagnose it.
   via `bridgeMcpTools(client, { maxResultChars: N })`. Rationale: ~8k
   English tokens or ~16k CJK tokens — fits with headroom across 5–10
   tool calls even at the context limit.
+- **Heal-on-load: poisoned sessions from older clients auto-repair.**
+  On session resume, every tool-role message whose content exceeds the
+  cap is truncated with the same head + tail policy. A stderr line
+  `▸ session "X": healed N oversized tool result(s)…` names the scope
+  of the repair. User and assistant messages are untouched — the
+  conversation flow is preserved, only the bloat from a past
+  `read_file` (etc.) shrinks. Without this, any session built with
+  pre-alpha.6 clients would tip over the 131k-token limit *on the very
+  first new prompt*, before the new 32k cap could matter.
 - **`DeepSeek 400: maximum context length` errors now show actionable
   advice** instead of a raw JSON blob. The decorated message points at
-  `/forget` (nuke the session file) and `/clear` (drop the display
-  history), and pretty-prints the requested-token figure.
+  the heal-on-load behaviour, `/forget` (nuke the session file) and
+  `/clear` (drop the display history), and pretty-prints the
+  requested-token figure.
 
 ### Added
 
@@ -35,14 +105,20 @@ both ends: prevent it, and diagnose it.
 - `formatLoopError(err)` export — the error-decorator used by the loop,
   exposed so library callers get the same advice when catching errors
   outside the TUI.
+- `healLoadedMessages(messages, maxChars)` export — the session-heal
+  helper, exposed so library callers who build their own resume flows
+  can apply the same policy.
 
-### Tests (+6, suite 262→268)
+### Tests (+9, suite 262→271)
 
 - `tests/mcp.test.ts` (+3) — truncation with head + tail preserved,
   no-op below cap, end-to-end `bridgeMcpTools` dispatch capped by
   default.
-- `tests/loop-error.test.ts` (+3 new file) — overflow annotation with
-  token figure, non-overflow passthrough, overflow without a figure.
+- `tests/loop-error.test.ts` (+6 new file) — overflow annotation with
+  token figure, non-overflow passthrough, overflow without a figure,
+  heal-on-load truncating tool-role messages while leaving user and
+  assistant messages intact, no-op when all messages fit, multi-hit
+  healing across several oversized rows.
 
 ### Migration note
 
