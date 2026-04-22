@@ -37,6 +37,11 @@ program
     "Use a named session (default: 'default'). Resume the same session next time.",
   )
   .option("--no-session", "Disable session persistence for this run (ephemeral chat)")
+  .option(
+    "--mcp <command>",
+    'Spawn an MCP server and bridge its tools. Shell-quoted: --mcp "npx -y @scope/server-x /path"',
+  )
+  .option("--mcp-prefix <str>", "Prefix prepended to every MCP tool name (avoid collisions)")
   .action(async (opts) => {
     // Default behavior: every chat is auto-saved to a session named 'default'
     // and auto-resumed next launch. Pass --no-session to opt out, or
@@ -56,6 +61,8 @@ program
       harvest: !!opts.harvest,
       branch: Number.isFinite(opts.branch) && opts.branch > 1 ? opts.branch : undefined,
       session,
+      mcp: opts.mcp,
+      mcpPrefix: opts.mcpPrefix,
     });
   });
 
@@ -74,6 +81,11 @@ program
     (v) => Number.parseInt(v, 10),
   )
   .option("--transcript <path>", "Write a JSONL transcript to this path for replay/diff")
+  .option(
+    "--mcp <command>",
+    'Spawn an MCP server and bridge its tools. Shell-quoted: --mcp "npx -y @scope/server-x /path"',
+  )
+  .option("--mcp-prefix <str>", "Prefix prepended to every MCP tool name (avoid collisions)")
   .action(async (task: string, opts) => {
     await runCommand({
       task,
@@ -82,6 +94,8 @@ program
       harvest: !!opts.harvest,
       branch: Number.isFinite(opts.branch) && opts.branch > 1 ? opts.branch : undefined,
       transcript: opts.transcript,
+      mcp: opts.mcp,
+      mcpPrefix: opts.mcpPrefix,
     });
   });
 

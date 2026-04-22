@@ -4,6 +4,11 @@ import { createInterface } from "node:readline/promises";
 import { defaultConfigPath, isPlausibleKey, loadApiKey, saveApiKey } from "../../config.js";
 import { loadDotenv } from "../../env.js";
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
+import { McpClient } from "../../mcp/client.js";
+import { bridgeMcpTools } from "../../mcp/registry.js";
+import { shellSplit } from "../../mcp/shell-split.js";
+import { StdioTransport } from "../../mcp/stdio.js";
+import type { ToolRegistry } from "../../tools.js";
 import { openTranscriptFile, recordFromLoopEvent, writeRecord } from "../../transcript.js";
 
 export interface RunOptions {
@@ -16,6 +21,10 @@ export interface RunOptions {
   branch?: number;
   /** JSONL transcript path — lets `reasonix replay` / `diff` audit this run. */
   transcript?: string;
+  /** Shell-style command string for an MCP server to bridge tools from. */
+  mcp?: string;
+  /** Name prefix for bridged MCP tools. */
+  mcpPrefix?: string;
 }
 
 async function ensureApiKey(): Promise<string> {
@@ -56,11 +65,41 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   const apiKey = await ensureApiKey();
   process.env.DEEPSEEK_API_KEY = apiKey;
 
+  // Optional MCP setup — mirrors chat's flow. Must happen before loop
+  // construction so the tools make it into the prefix.
+  let mcp: McpClient | undefined;
+  let tools: ToolRegistry | undefined;
+  if (opts.mcp) {
+    const argv = shellSplit(opts.mcp);
+    const [command, ...args] = argv;
+    if (!command) {
+      process.stderr.write("error: --mcp command is empty\n");
+      process.exit(2);
+    }
+    mcp = new McpClient({ transport: new StdioTransport({ command, args }) });
+    try {
+      await mcp.initialize();
+      const bridge = await bridgeMcpTools(mcp, { namePrefix: opts.mcpPrefix });
+      tools = bridge.registry;
+      process.stderr.write(
+        `▸ MCP: ${bridge.registeredNames.length} tool(s) from ${argv.join(" ")}\n`,
+      );
+    } catch (err) {
+      process.stderr.write(`MCP setup failed: ${(err as Error).message}\n`);
+      await mcp.close();
+      process.exit(1);
+    }
+  }
+
   const client = new DeepSeekClient();
-  const prefix = new ImmutablePrefix({ system: opts.system });
+  const prefix = new ImmutablePrefix({
+    system: opts.system,
+    toolSpecs: tools?.specs(),
+  });
   const loop = new CacheFirstLoop({
     client,
     prefix,
+    tools,
     model: opts.model,
     harvest: opts.harvest,
     branch: opts.branch,
@@ -110,4 +149,6 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     process.stdout.write(`\ntranscript: ${opts.transcript}\n`);
     process.stdout.write(`  → npx reasonix replay ${opts.transcript}\n`);
   }
+
+  await mcp?.close();
 }

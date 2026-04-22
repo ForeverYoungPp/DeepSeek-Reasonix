@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
 import type { LoopEvent } from "../../loop.js";
 import type { SessionSummary } from "../../telemetry.js";
+import type { ToolRegistry } from "../../tools.js";
 import { openTranscriptFile, recordFromLoopEvent, writeRecord } from "../../transcript.js";
 import { type DisplayEvent, EventRow } from "./EventLog.js";
 import { PromptInput } from "./PromptInput.js";
@@ -17,6 +18,12 @@ export interface AppProps {
   harvest?: boolean;
   branch?: number;
   session?: string;
+  /**
+   * Pre-populated tool registry (e.g. from bridgeMcpTools()). When present,
+   * its specs are folded into the ImmutablePrefix so the model sees them,
+   * and its dispatch is used for tool calls — MCP tools become first-class.
+   */
+  tools?: ToolRegistry;
 }
 
 /**
@@ -32,7 +39,7 @@ interface StreamingState {
   reasoning: string;
 }
 
-export function App({ model, system, transcript, harvest, branch, session }: AppProps) {
+export function App({ model, system, transcript, harvest, branch, session, tools }: AppProps) {
   const { exit } = useApp();
   const [historical, setHistorical] = useState<DisplayEvent[]>([]);
   const [streaming, setStreaming] = useState<DisplayEvent | null>(null);
@@ -65,11 +72,14 @@ export function App({ model, system, transcript, harvest, branch, session }: App
   const loop = useMemo(() => {
     if (loopRef.current) return loopRef.current;
     const client = new DeepSeekClient();
-    const prefix = new ImmutablePrefix({ system });
-    const l = new CacheFirstLoop({ client, prefix, model, harvest, branch, session });
+    const prefix = new ImmutablePrefix({
+      system,
+      toolSpecs: tools?.specs(),
+    });
+    const l = new CacheFirstLoop({ client, prefix, tools, model, harvest, branch, session });
     loopRef.current = l;
     return l;
-  }, [model, system, harvest, branch, session]);
+  }, [model, system, harvest, branch, session, tools]);
 
   // Surface a one-time banner about session state on first mount.
   const sessionBannerShown = useRef(false);

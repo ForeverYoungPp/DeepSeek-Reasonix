@@ -38,7 +38,9 @@ tests/mcp.test.ts — 10 tests, in-process fake transport, no child processes
 
 | feature | status | note |
 |---|---|---|
-| CLI wiring (`reasonix chat --mcp <cmd>`) | deferred | just a thin layer; next commit |
+| CLI wiring (`reasonix chat --mcp <cmd>`) | ✅ shipped | see Usage below |
+| Bundled demo server | ✅ shipped | `examples/mcp-server-demo.ts`, exposes echo/add/get_time |
+| Real-subprocess integration test | ✅ shipped | `tests/mcp-integration.test.ts` |
 | Resources / `resources/list` / `resources/read` | deferred | Reasonix doesn't surface resources today |
 | Prompts / `prompts/list` | deferred | ditto |
 | Progress notifications | deferred | long-running tool support comes with the CLI work |
@@ -46,7 +48,35 @@ tests/mcp.test.ts — 10 tests, in-process fake transport, no child processes
 | SSE transport | deferred | stdio covers the common case; SSE is a later variant |
 | MCP server that Reasonix exposes | never | out of scope — Reasonix is a client |
 
-## Usage (library, until CLI lands)
+## Usage (CLI)
+
+Spawn an MCP server alongside chat / run, its tools become first-class:
+
+```bash
+# Against the bundled demo server (no external install required):
+reasonix chat --mcp "node --import tsx examples/mcp-server-demo.ts"
+
+# Against the official filesystem server:
+reasonix chat --mcp "npx -y @modelcontextprotocol/server-filesystem /tmp/safe-dir"
+
+# Optional name prefix when mixing multiple servers (future) or to
+# disambiguate:
+reasonix chat \
+  --mcp "npx -y @modelcontextprotocol/server-filesystem /tmp" \
+  --mcp-prefix fs_
+
+# Same flag works with one-shot run:
+reasonix run "list files in /tmp/safe-dir" \
+  --mcp "npx -y @modelcontextprotocol/server-filesystem /tmp/safe-dir"
+```
+
+`--mcp` accepts a shell-style string (spaces separate args; use quotes for
+paths containing spaces). The tools land in a ToolRegistry, get folded
+into the ImmutablePrefix for the model, and every call goes through
+Reasonix's Cache-First loop + tool-call repair (scavenge / flatten /
+storm) automatically.
+
+## Usage (library)
 
 ```ts
 import {
