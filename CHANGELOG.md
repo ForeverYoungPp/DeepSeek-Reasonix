@@ -3,6 +3,78 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] — 2026-04-21
+
+**Headline:** Seven more UX improvements on top of 0.4.2. Layered in
+after live `reasonix code` sessions surfaced pain points: R1 fake
+tool-call hallucinations leaking into forced summaries, no quick
+retry, /status too thin, tool errors blending in, no prompt history,
+no one-key pending-edit confirmation, and — critically — Esc
+blocking for 30-90s on a reasoner call the user never asked for.
+
+### Added
+
+- **`/retry` slash command.** Truncates the log back to just before
+  your last user message, then re-submits so the model runs a fresh
+  turn from a clean slate. Persists the truncation to the session
+  file. `SlashResult` grows a `resubmit?: string` field the TUI
+  honors after displaying `info`.
+- **`/status` is now a real situation-report.** Labeled table:
+  model, harvest/branch/stream flags, last-turn context usage
+  against the window (`42k/131k (32%)`), MCP server + tool counts,
+  session name + log length + resumed-count, pending edit count.
+- **Prompt history with ↑/↓.** Shell-style recall. Lives in an
+  `App.tsx` ref; cursor −1 = live input, 0+ walks back. Process-
+  scoped — no cross-run persistence.
+- **Y/N fast-path for pending edits.** When pending count > 0,
+  `y` + Enter = `/apply`, `n` + Enter = `/discard`. Doesn't
+  interfere otherwise. Preview message ends with `(or y / n)`.
+
+### Changed
+
+- **Tool errors render red + ✗**, not yellow + →. Tool results
+  prefixed `ERROR:` (from `flattenMcpResult` on `isError`) now
+  visually distinguish from success. A failure needs different
+  attention than a directory listing.
+- **Esc abort no longer forces another API call.** Previously:
+  Esc → `warning: aborted at iter N/M — forcing summary` → another
+  full reasoner call that took 30-90s → done. Users reported the
+  wait was the opposite of "cancel." Now: Esc → quick warning →
+  synthetic `assistant_final` ("no summary produced — ask again
+  or `/retry` when ready") → done. Takes milliseconds. Prior tool
+  output stays in the log so a follow-up question hits the warm
+  prefix cache. Budget / context-guard still call `forceSummary`
+  because there the user didn't choose to stop; we did.
+
+### Fixed
+
+- **Forced-summary path no longer leaks DSML tool-call markup as
+  prose.** Passing `tools: undefined` wasn't enough — R1 primed
+  for tool use still emitted `<｜DSML｜function_calls>…
+  </｜DSML｜function_calls>` as plain text. Two layers: (1) append
+  an explicit user-role instruction at the end of the forced-summary
+  message list ("summarize in plain prose, do NOT emit any tool
+  calls or function-call markup"); (2) post-hoc strip known
+  envelopes (DSML full-width, DSML ASCII, Anthropic
+  `<function_calls>`, truncated un-closed DSML openers) from the
+  response. Exported as `stripHallucinatedToolMarkup`. Fallback
+  message when stripping leaves nothing points at `/retry` and
+  `/think`.
+
+### Tests (+13, suite 319→332)
+
+- `tests/slash.test.ts` (+8) — `/think` empty/populated/help,
+  `/retry` happy path + empty-log + help listing, `/status` new
+  format + pending-edit suppression at count 0.
+- `tests/loop-error.test.ts` (+5) — `stripHallucinatedToolMarkup`
+  live R1 DSML shape, Anthropic-style, truncated un-closed opener,
+  plain prose passthrough, all-markup edge case.
+- `tests/loop.test.ts` — abort test rewritten to confirm no extra
+  API call is made (previously asserted a "partial findings"
+  summary from the never-needed follow-up).
+
+---
+
 ## [0.4.2] — 2026-04-21
 
 **Headline:** Three small but visible UX improvements from a real

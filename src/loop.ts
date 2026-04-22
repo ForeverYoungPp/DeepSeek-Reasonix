@@ -378,12 +378,34 @@ export class CacheFirstLoop {
 
     for (let iter = 0; iter < this.maxToolIters; iter++) {
       if (this._aborted) {
+        // Esc means "stop now" — not "stop and force another 30-90s
+        // reasoner call to produce a summary I didn't ask for". The
+        // user's mental model of cancel is immediate. We emit a
+        // synthetic assistant_final (tagged forcedSummary so the
+        // code-mode applier ignores it) with a short stopped
+        // message, then done. The prior tool outputs are still in
+        // the log if the user wants to continue — asking again
+        // will hit a warm cache and be cheap.
+        //
+        // Budget / context-guard still call forceSummaryAfterIterLimit
+        // because there the USER didn't choose to stop — we did —
+        // and leaving them staring at nothing is worse than one extra
+        // call.
         yield {
           turn: this._turn,
           role: "warning",
-          content: `aborted at iter ${iter}/${this.maxToolIters} — forcing summary from what was gathered`,
+          content: `aborted at iter ${iter}/${this.maxToolIters} — stopped without producing a summary (press ↑ + Enter or /retry to resume)`,
         };
-        yield* this.forceSummaryAfterIterLimit({ reason: "aborted" });
+        const stoppedMsg =
+          "[aborted by user (Esc) — no summary produced. Ask again or /retry when ready; prior tool output is still in the log.]";
+        this.appendAndPersist({ role: "assistant", content: stoppedMsg });
+        yield {
+          turn: this._turn,
+          role: "assistant_final",
+          content: stoppedMsg,
+          forcedSummary: true,
+        };
+        yield { turn: this._turn, role: "done", content: stoppedMsg };
         return;
       }
       if (!warnedForIterBudget && iter >= warnAt) {

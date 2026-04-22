@@ -262,7 +262,7 @@ describe("CacheFirstLoop (non-streaming)", () => {
     expect(warnings[0]).toMatch(/Esc/);
   });
 
-  it("abort() mid-step diverts to the summary path with an 'aborted' prefix", async () => {
+  it("abort() mid-step stops immediately without a follow-up API call", async () => {
     const reg = new ToolRegistry();
     reg.register({
       name: "probe",
@@ -274,11 +274,15 @@ describe("CacheFirstLoop (non-streaming)", () => {
       content: "",
       tool_calls: [{ id: "c", type: "function", function: { name: "probe", arguments: "{}" } }],
     };
-    // Only one chaining response — after the abort fires on its tool
-    // event, the loop's next API call IS the forced-summary request, so
-    // the summary response needs to be index 1.
-    const responses: FakeResponseShape[] = [chainingToolCall, { content: "partial findings." }];
-    const client = makeClient(responses);
+    // Only one chaining response needed — abort should stop the loop
+    // before any follow-up model call. A second response in the array
+    // would indicate the loop made an unwanted extra API call.
+    const fetchSpy = vi.fn() as unknown as typeof fetch;
+    const responses: FakeResponseShape[] = [chainingToolCall];
+    const client = new DeepSeekClient({
+      apiKey: "sk-test",
+      fetch: fakeFetch(responses) as unknown as typeof fetch,
+    });
     const loop = new CacheFirstLoop({
       client,
       prefix: new ImmutablePrefix({ system: "s", toolSpecs: reg.specs() }),
@@ -289,22 +293,33 @@ describe("CacheFirstLoop (non-streaming)", () => {
 
     // Call abort AFTER the first tool event fires — simulates the user
     // hitting Esc while the loop is exploring.
-    const events: { role: string; content?: string }[] = [];
+    const events: { role: string; content?: string; forcedSummary?: boolean }[] = [];
     let aborted = false;
     for await (const ev of loop.step("go")) {
-      events.push({ role: ev.role, content: ev.content });
+      events.push({ role: ev.role, content: ev.content, forcedSummary: ev.forcedSummary });
       if (!aborted && ev.role === "tool") {
         aborted = true;
         loop.abort();
       }
     }
 
+    // Warning fires with the abort notice.
     const warnings = events.filter((e) => e.role === "warning");
-    expect(warnings.some((w) => /aborted/.test(w.content ?? ""))).toBe(true);
+    expect(warnings.some((w) => /aborted at iter/.test(w.content ?? ""))).toBe(true);
+
+    // Synthetic assistant_final is tagged forcedSummary and carries
+    // the stopped-message text. It should NOT contain any model
+    // output because no second API call was made.
     const finals = events.filter((e) => e.role === "assistant_final");
-    const summary = finals[finals.length - 1];
-    expect(summary!.content).toMatch(/aborted by user/);
-    expect(summary!.content).toContain("partial findings.");
+    const stopped = finals[finals.length - 1]!;
+    expect(stopped.forcedSummary).toBe(true);
+    expect(stopped.content).toMatch(/aborted by user \(Esc\)/);
+    expect(stopped.content).toMatch(/no summary produced/);
+
+    // Suite ends with `done`.
+    expect(events[events.length - 1]!.role).toBe("done");
+    // Silence unused-var warning.
+    void fetchSpy;
   });
 
   it("forces a summary when maxToolIters is exhausted, instead of stopping silently", async () => {
