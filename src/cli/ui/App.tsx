@@ -10,13 +10,16 @@ import {
   restoreSnapshots,
   snapshotBeforeEdits,
 } from "../../code/edit-blocks.js";
+import { addProjectShellAllowed } from "../../config.js";
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
 import type { LoopEvent } from "../../loop.js";
 import type { SessionSummary } from "../../telemetry.js";
 import type { ToolRegistry } from "../../tools.js";
+import { formatCommandResult, runCommand } from "../../tools/shell.js";
 import { openTranscriptFile, recordFromLoopEvent, writeRecord } from "../../transcript.js";
 import { type DisplayEvent, EventRow } from "./EventLog.js";
 import { PromptInput } from "./PromptInput.js";
+import { ShellConfirm, type ShellConfirmChoice, derivePrefix } from "./ShellConfirm.js";
 import { SlashSuggestions } from "./SlashSuggestions.js";
 import { StatsPanel } from "./StatsPanel.js";
 import { type McpServerSummary, handleSlash, parseSlash, suggestSlashCommands } from "./slash.js";
@@ -141,6 +144,19 @@ export function App({
   // auto-apply — v0.4.1 showed that "model proposed, so apply" turns
   // analysis into unintended edits. The user explicitly confirms now.
   const pendingEdits = useRef<EditBlock[]>([]);
+  // Shell command the model asked to run that wasn't on the auto-run
+  // allowlist. Non-null renders the ShellConfirm modal and disables
+  // the prompt input; the user picks Run once / Always allow in this
+  // project / Deny and we feed the result back as a synthetic user
+  // message so the model sees what happened.
+  const [pendingShell, setPendingShell] = useState<string | null>(null);
+  // Text waiting to be submitted AFTER the current turn finishes.
+  // Set by ShellConfirm's onChoose when the user approves faster than
+  // the model's "awaiting confirmation" response. We can't call
+  // handleSubmit directly because it early-returns on `busy === true`,
+  // so we abort the in-flight turn and let the effect below fire the
+  // submit once busy clears.
+  const [queuedSubmit, setQueuedSubmit] = useState<string | null>(null);
   // Shell-style history of user prompts. ↑/↓ while idle walks it;
   // submit pushes to the end. Cursor -1 = "live input", 0+ = "N turns
   // back from newest". We don't persist history to disk — sessions
@@ -306,6 +322,11 @@ export function App({
       return;
     }
     if (busy) return;
+    // ShellConfirm owns the full keyboard while it's showing. If we
+    // kept handling ↑/↓ / Tab here they'd race with its SingleSelect
+    // — the picker would move AND history recall would fire into the
+    // (hidden) prompt buffer. Bail early.
+    if (pendingShell) return;
 
     // Slash-suggestion mode takes priority over history recall.
     // When the user is typing a `/…` prefix and there are matches,
@@ -669,6 +690,25 @@ export function App({
                 toolName: ev.toolName,
               },
             ]);
+            // run_command rejected because the command isn't on the
+            // auto-allow list. Stash it so the y/n fast-path can run
+            // it after user confirmation. Only the latest such request
+            // is tracked — a second rejection overwrites the first.
+            if (
+              codeMode &&
+              ev.toolName === "run_command" &&
+              ev.content.includes('"NeedsConfirmationError:') &&
+              ev.toolArgs
+            ) {
+              try {
+                const parsed = JSON.parse(ev.toolArgs) as { command?: unknown };
+                if (typeof parsed.command === "string" && parsed.command.trim()) {
+                  setPendingShell(parsed.command.trim());
+                }
+              } catch {
+                /* malformed args — skip the prompt */
+              }
+            }
           } else if (ev.role === "error") {
             setHistorical((prev) => [
               ...prev,
@@ -715,6 +755,85 @@ export function App({
     ],
   );
 
+  /**
+   * ShellConfirm callback. Three outcomes, all of them ending with a
+   * synthetic user message fed back into the loop so the model sees
+   * what happened next turn:
+   *   - deny → "I denied running X." and we move on.
+   *   - run_once / always_allow → run the command inside the sandbox
+   *     root, attach the formatted output as the user turn. In the
+   *     always_allow case we also persist the derived prefix to
+   *     config so next invocation auto-runs.
+   */
+  const handleShellConfirm = useCallback(
+    async (choice: ShellConfirmChoice) => {
+      const cmd = pendingShell;
+      if (!cmd || !codeMode) return;
+      setPendingShell(null);
+
+      let synthetic: string;
+      if (choice === "deny") {
+        setHistorical((prev) => [
+          ...prev,
+          { id: `sh-deny-${Date.now()}`, role: "info", text: `▸ denied: ${cmd}` },
+        ]);
+        synthetic = `I denied running \`${cmd}\`. Please continue without running it.`;
+      } else {
+        if (choice === "always_allow") {
+          const prefix = derivePrefix(cmd);
+          addProjectShellAllowed(codeMode.rootDir, prefix);
+          setHistorical((prev) => [
+            ...prev,
+            {
+              id: `sh-allow-${Date.now()}`,
+              role: "info",
+              text: `▸ always allowed "${prefix}" for ${codeMode.rootDir}`,
+            },
+          ]);
+        }
+        setHistorical((prev) => [
+          ...prev,
+          { id: `sh-run-${Date.now()}`, role: "info", text: `▸ running: ${cmd}` },
+        ]);
+        let body: string;
+        try {
+          const res = await runCommand(cmd, { cwd: codeMode.rootDir });
+          body = formatCommandResult(cmd, res);
+        } catch (err) {
+          body = `$ ${cmd}\n[failed to spawn] ${(err as Error).message}`;
+        }
+        setHistorical((prev) => [
+          ...prev,
+          { id: `sh-out-${Date.now()}`, role: "info", text: body },
+        ]);
+        synthetic = `I ran the command you requested. Output:\n\n${body}`;
+      }
+
+      // If the prior turn is still streaming ("please confirm" chatter),
+      // handleSubmit would early-return on busy=true. Abort the in-flight
+      // turn and queue the synthetic for the effect below, which fires
+      // once busy clears. Otherwise submit directly.
+      if (busy) {
+        loop.abort();
+        setQueuedSubmit(synthetic);
+      } else {
+        await handleSubmit(synthetic);
+      }
+    },
+    [pendingShell, codeMode, handleSubmit, busy, loop],
+  );
+
+  // Drain the shell-confirm queue after the in-flight turn tears down.
+  // React closure staleness means handleShellConfirm can't just await
+  // the abort itself — this effect is the reliable edge detector.
+  useEffect(() => {
+    if (!busy && queuedSubmit !== null) {
+      const text = queuedSubmit;
+      setQueuedSubmit(null);
+      void handleSubmit(text);
+    }
+  }, [busy, queuedSubmit, handleSubmit]);
+
   return (
     <TickerProvider disabled={PLAIN_UI}>
       <Box flexDirection="column">
@@ -727,15 +846,24 @@ export function App({
           balance={balance}
         />
         <Static items={historical}>{(item) => <EventRow key={item.id} event={item} />}</Static>
-        {!PLAIN_UI && streaming ? (
+        {/*
+          Live rows are hidden while the ShellConfirm modal is up — the
+          model's concurrent "please confirm" stream is noise the user
+          doesn't need, and the picker shouldn't fight it for visual
+          attention. They come back naturally once the user chooses and
+          the next turn begins.
+        */}
+        {!PLAIN_UI && !pendingShell && streaming ? (
           <Box marginY={1}>
             <EventRow event={streaming} />
           </Box>
         ) : null}
-        {!PLAIN_UI && ongoingTool ? (
+        {!PLAIN_UI && !pendingShell && ongoingTool ? (
           <OngoingToolRow tool={ongoingTool} progress={toolProgress} />
         ) : null}
-        {!PLAIN_UI && !ongoingTool && statusLine ? <StatusRow text={statusLine} /> : null}
+        {!PLAIN_UI && !pendingShell && !ongoingTool && statusLine ? (
+          <StatusRow text={statusLine} />
+        ) : null}
         {/*
           Belt-and-suspenders fallback: if we're busy but NONE of the
           specific indicators (streaming, ongoingTool, statusLine) is
@@ -744,11 +872,26 @@ export function App({
           without a label. Catches micro-gaps between events that the
           targeted status lines don't cover.
         */}
-        {!PLAIN_UI && busy && !streaming && !ongoingTool && !statusLine ? (
+        {!PLAIN_UI && !pendingShell && busy && !streaming && !ongoingTool && !statusLine ? (
           <StatusRow text="processing…" />
         ) : null}
-        <PromptInput value={input} onChange={setInput} onSubmit={handleSubmit} disabled={busy} />
-        <SlashSuggestions matches={slashMatches} selectedIndex={slashSelected} />
+        {pendingShell ? (
+          <ShellConfirm
+            command={pendingShell}
+            allowPrefix={derivePrefix(pendingShell)}
+            onChoose={handleShellConfirm}
+          />
+        ) : (
+          <>
+            <PromptInput
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              disabled={busy}
+            />
+            <SlashSuggestions matches={slashMatches} selectedIndex={slashSelected} />
+          </>
+        )}
       </Box>
     </TickerProvider>
   );

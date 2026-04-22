@@ -144,8 +144,21 @@ export function stripMath(s: string): string {
   );
 }
 
-/** Split a single line into styled segments for bold / italic / inline code. */
-const INLINE_RE = /(\*\*([^*\n]+?)\*\*|`([^`\n]+?)`|(?<![*\w])\*([^*\n]+?)\*(?!\w))/g;
+/**
+ * Split a single line into styled segments for bold / italic / inline
+ * code.
+ *
+ * Triple-backtick (```…```) runs are matched BEFORE the single-backtick
+ * case so a one-line code span like `​``bash echo hi``​` is captured
+ * whole instead of the single-backtick regex greedily eating the
+ * middle and leaving two stray backticks on each side (what 0.4.15
+ * users saw when the model emitted `​``bash …``​` on the same line as
+ * prose). Content may contain single backticks but not newlines —
+ * multi-line fenced code is a block-level concern handled in
+ * `parseBlocks`.
+ */
+const INLINE_RE =
+  /(\*\*([^*\n]+?)\*\*|```([^\n]+?)```|`([^`\n]+?)`|(?<![*\w])\*([^*\n]+?)\*(?!\w))/g;
 
 function InlineMd({ text }: { text: string }) {
   const parts: React.ReactNode[] = [];
@@ -156,6 +169,11 @@ function InlineMd({ text }: { text: string }) {
     if (start > last) {
       parts.push(<Text key={`t${idx++}`}>{text.slice(last, start)}</Text>);
     }
+    // Groups, in the order they appear in INLINE_RE:
+    //   m[2] = bold content (inside ** **)
+    //   m[3] = triple-backtick content (strip leading lang tag)
+    //   m[4] = single-backtick inline code
+    //   m[5] = italic content (inside * *)
     if (m[2] !== undefined) {
       parts.push(
         <Text key={`b${idx++}`} bold>
@@ -163,15 +181,24 @@ function InlineMd({ text }: { text: string }) {
         </Text>,
       );
     } else if (m[3] !== undefined) {
+      // One-line fenced span: ```bash echo hi``` → drop the "bash "
+      // language tag so the user doesn't see it rendered in code color.
+      const stripped = m[3].replace(/^(\w+)\s+/, "");
       parts.push(
         <Text key={`c${idx++}`} color="yellow">
-          {m[3]}
+          {stripped}
         </Text>,
       );
     } else if (m[4] !== undefined) {
       parts.push(
-        <Text key={`i${idx++}`} italic>
+        <Text key={`c${idx++}`} color="yellow">
           {m[4]}
+        </Text>,
+      );
+    } else if (m[5] !== undefined) {
+      parts.push(
+        <Text key={`i${idx++}`} italic>
+          {m[5]}
         </Text>,
       );
     }
@@ -250,6 +277,11 @@ export function parseBlocks(raw: string): Block[] {
   let codeBuf: string[] = [];
   let listBuf: BulletBlock | null = null;
 
+  // Fence length of the currently-open code block so a block opened
+  // with ````` closes only on `````, matching GFM. Empty when we're
+  // not in code mode.
+  let codeFence = "";
+
   const flushPara = () => {
     if (para.length) {
       out.push({ kind: "paragraph", text: para.join(" ") });
@@ -307,22 +339,51 @@ export function parseBlocks(raw: string): Block[] {
       }
     }
 
-    const fence = line.match(/^```(\w*)/);
-    if (fence) {
-      if (inCode) {
-        out.push({ kind: "code", lang: codeLang, text: codeBuf.join("\n") });
-        codeBuf = [];
-        codeLang = "";
-        inCode = false;
-      } else {
+    // Fenced code block (GFM). The fence is 3+ backticks, may have up
+    // to 3 leading spaces, and carries an optional language tag. A
+    // closing fence must be the SAME backtick run length or longer.
+    //
+    // Two paths:
+    //   a) Fence on its own line → multi-line block, accumulate until
+    //      a matching close fence.
+    //   b) Fence opens AND closes on the same line (e.g.
+    //      `​``bash echo hi``​`) → emit as a one-line code block so
+    //      the inline parser doesn't half-eat the backticks.
+    if (!inCode) {
+      const open = line.match(/^ {0,3}(`{3,})(\w*)\s*(.*)$/);
+      if (open) {
+        const fence = open[1]!;
+        const lang = open[2] ?? "";
+        const rest = open[3] ?? "";
+        const closeOnSame = rest.match(new RegExp(`^(.*?)${fence}\\s*$`));
+        if (closeOnSame) {
+          flushPara();
+          flushList();
+          out.push({ kind: "code", lang, text: (closeOnSame[1] ?? "").trim() });
+          continue;
+        }
         flushPara();
         flushList();
         inCode = true;
-        codeLang = fence[1] ?? "";
+        codeLang = lang;
+        codeFence = fence;
+        // Anything after the opening fence on the SAME line is
+        // still body content (rare but legal).
+        if (rest.length > 0) codeBuf.push(rest);
+        continue;
       }
-      continue;
-    }
-    if (inCode) {
+    } else {
+      // In code mode — check for closing fence. Same indent rules as
+      // opening, and the backtick run must be at least as long.
+      const close = line.match(/^ {0,3}(`{3,})\s*$/);
+      if (close && close[1]!.length >= codeFence.length) {
+        out.push({ kind: "code", lang: codeLang, text: codeBuf.join("\n") });
+        codeBuf = [];
+        codeLang = "";
+        codeFence = "";
+        inCode = false;
+        continue;
+      }
       codeBuf.push(rawLine);
       continue;
     }

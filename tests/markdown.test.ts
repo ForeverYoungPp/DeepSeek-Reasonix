@@ -223,3 +223,46 @@ describe("parseBlocks — GFM tables", () => {
     }
   });
 });
+
+describe("parseBlocks — fenced code blocks", () => {
+  it("recognizes a plain multi-line fence", () => {
+    const blocks = parseBlocks("```bash\necho hi\necho bye\n```");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toEqual({ kind: "code", lang: "bash", text: "echo hi\necho bye" });
+  });
+
+  it("allows up to 3 leading spaces on the fence line (GFM)", () => {
+    const blocks = parseBlocks("   ```bash\n   echo indented\n   ```");
+    const code = blocks.find((b) => b.kind === "code");
+    expect(code).toBeDefined();
+    expect(code && code.kind === "code" && code.lang).toBe("bash");
+  });
+
+  it("handles a one-line fenced code block (model puts everything on one line)", () => {
+    const blocks = parseBlocks("```bash svn commit -m hi```");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toEqual({ kind: "code", lang: "bash", text: "svn commit -m hi" });
+  });
+
+  it("handles a one-line fenced block surrounded by prose paragraphs", () => {
+    const blocks = parseBlocks("Run this:\n\n```bash svn status```\n\nOr:\n\n```bash svn log```");
+    expect(blocks).toHaveLength(4);
+    expect(blocks[0]).toMatchObject({ kind: "paragraph" });
+    expect(blocks[1]).toMatchObject({ kind: "code", text: "svn status" });
+    expect(blocks[2]).toMatchObject({ kind: "paragraph" });
+    expect(blocks[3]).toMatchObject({ kind: "code", text: "svn log" });
+  });
+
+  it("closing fence must be at least as long as the opening fence", () => {
+    // Opened with 4 backticks so body can contain 3 without closing.
+    const blocks = parseBlocks("````\nsome ``` code\n````");
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toEqual({ kind: "code", lang: "", text: "some ``` code" });
+  });
+
+  it("an unclosed fence still emits a code block at EOF", () => {
+    const blocks = parseBlocks("```python\nprint('hi')");
+    const code = blocks.find((b) => b.kind === "code");
+    expect(code && code.kind === "code" && code.text).toBe("print('hi')");
+  });
+});

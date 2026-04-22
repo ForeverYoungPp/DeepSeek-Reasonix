@@ -3,6 +3,74 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.16] — 2026-04-22
+
+**Headline:** Native `run_command` shell tool so the model can run
+its own tests and verify its work (Claude Code / Aider parity).
+3-choice picker for every unknown command — "run once", "always
+allow in this project" (persists to `~/.reasonix/config.json`), or
+"deny". Plus a session picker on startup so `reasonix code` stops
+silently resuming the last conversation, and a Windows backspace fix.
+
+### Added
+
+- **`src/tools/shell.ts`** — `run_command(command, timeoutSec?)`
+  registered by default in `reasonix code`. Read-only / testing
+  commands (`git status`, `ls`, `cat`, `grep`, `rg`, `npm test`,
+  `pytest`, `cargo test`, `cargo check`, `cargo clippy`, `go test`,
+  `deno test`, `bun test`, `ruff`, `mypy`, `npx tsc --noEmit`,
+  `npx biome check`, language `--version` probes) auto-run. Anything
+  else goes through the ShellConfirm picker. 60s default timeout,
+  32k-char output cap. `shell: false` in the child_process spawn
+  so the model can't pipe / redirect / chain its way past the
+  allowlist.
+- **`src/cli/ui/ShellConfirm.tsx`** — 3-option SingleSelect modal
+  that renders when the model asks to run a non-allowlisted
+  command. Borders + color so it's impossible to miss. Arrow-key
+  navigation; Enter confirms. No `y/n` hotkey — too easy to trigger
+  by accident mid-typing.
+- **`src/cli/ui/SessionPicker.tsx`** — on `reasonix chat` /
+  `reasonix code` startup, if the session has prior messages, show
+  a 3-option picker: **New** (default, safer), **Resume** (continue
+  where you left off), **Delete and start new**. Flags `--resume`
+  / `--new` bypass the picker for CI / muscle-memory.
+- **Per-project persistent allowlist** — `config.projects[<abs>].shellAllowed`
+  stores prefixes the user approved via "always allow". On next
+  `reasonix code` in that dir they auto-run. Helpers
+  `loadProjectShellAllowed` / `addProjectShellAllowed` exported.
+
+### Fixed
+
+- **Backspace dead on some Windows terminals.** Certain Git Bash /
+  winpty combos report plain Backspace with `key.delete=true` and
+  `key.backspace=false`; the 0.4.15 cursor reducer split the two
+  and treated `delete` as forward-delete, which is a no-op when the
+  cursor is at the end of the buffer — so pressing Backspace did
+  nothing and Ctrl+Backspace (reported differently) was the only
+  way to delete. Now both flags collapse to backward-delete, plus
+  raw DEL (0x7f) and BS (0x08) bytes in `key.input` are honored as
+  backspace too.
+
+### Tests (+43, suite 474→517)
+
+- `tests/shell-tools.test.ts` (+27) — tokenizer (quoting, escapes,
+  unclosed-quote rejection); allowlist matching (exact / prefix /
+  whitespace normalization / extras); `runCommand` against real
+  child processes (stdout, stderr, cwd, timeout kill, output cap,
+  empty-command rejection); registry dispatch (auto-run, refusal
+  via `NeedsConfirmationError`, `allowAll: true` bypass);
+  `formatCommandResult`; `NeedsConfirmationError` name/message
+  invariants (no stale `/apply-shell` reference).
+- `tests/shell-confirm.test.ts` (+4) — `derivePrefix` picks one or
+  two tokens based on known wrappers and normalizes whitespace.
+- `tests/config.test.ts` (+3) — `loadProjectShellAllowed` defaults
+  to `[]`; `addProjectShellAllowed` persists and dedups per-project;
+  ignores empty prefixes.
+- `tests/multiline-keys.test.ts` (+2) — raw DEL/BS bytes are
+  treated as backspace; `key.delete` unified with `key.backspace`.
+
+---
+
 ## [0.4.15] — 2026-04-22
 
 **Headline:** Web search + fetch tools (on by default, zero

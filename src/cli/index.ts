@@ -59,6 +59,8 @@ program
   )
   .option("-m, --model <id>", "Override default reasoner model")
   .option("--no-session", "Disable session persistence for this run")
+  .option("-r, --resume", "Skip the session picker — always continue prior messages")
+  .option("-n, --new", "Skip the session picker — always wipe prior messages and start fresh")
   .option("--transcript <path>", "Write a JSONL transcript to this path")
   .action(async (dir: string | undefined, opts) => {
     await codeCommand({
@@ -66,6 +68,8 @@ program
       model: opts.model,
       noSession: opts.session === false,
       transcript: opts.transcript,
+      forceResume: !!opts.resume,
+      forceNew: !!opts.new,
     });
   });
 
@@ -90,6 +94,8 @@ program
   )
   .option("--session <name>", "Use a named session (default: from config, usually 'default').")
   .option("--no-session", "Disable session persistence for this run (ephemeral chat)")
+  .option("-r, --resume", "Skip the session picker — always continue prior messages")
+  .option("-n, --new", "Skip the session picker — always wipe prior messages and start fresh")
   .option(
     "--mcp <spec>",
     'MCP server spec; repeatable. "name=cmd args...", "cmd args...", or a URL (http/https → SSE transport). Overrides config.mcp when provided.',
@@ -120,6 +126,8 @@ program
       session: defaults.session,
       mcp: defaults.mcp,
       mcpPrefix: opts.mcpPrefix,
+      forceResume: !!opts.resume,
+      forceNew: !!opts.new,
     });
   });
 

@@ -103,15 +103,27 @@ describe("processMultilineKey — deletion", () => {
     expect(r.cursor).toBeNull();
   });
 
-  it("Delete removes the char AT the cursor, cursor stays", () => {
-    const r = processMultilineKey("abcd", 1, key({ delete: true }));
+  it("Delete behaves like Backspace (unified — some Windows terminals report Backspace as delete)", () => {
+    const r = processMultilineKey("abcd", 2, key({ delete: true }));
     expect(r.next).toBe("acd");
     expect(r.cursor).toBe(1);
   });
 
-  it("Delete at end-of-buffer is a no-op", () => {
-    const r = processMultilineKey("abc", 3, key({ delete: true }));
+  it("Delete at cursor 0 is a no-op (nothing before the cursor)", () => {
+    const r = processMultilineKey("abc", 0, key({ delete: true }));
     expect(r.next).toBeNull();
+  });
+
+  it("raw DEL byte (0x7f) in key.input is treated as backspace", () => {
+    const r = processMultilineKey("abcd", 2, key({ input: "\x7f" }));
+    expect(r.next).toBe("acd");
+    expect(r.cursor).toBe(1);
+  });
+
+  it("raw BS byte (0x08) in key.input is treated as backspace", () => {
+    const r = processMultilineKey("abcd", 2, key({ input: "\b" }));
+    expect(r.next).toBe("acd");
+    expect(r.cursor).toBe(1);
   });
 
   it("Backspace across a newline removes the newline", () => {

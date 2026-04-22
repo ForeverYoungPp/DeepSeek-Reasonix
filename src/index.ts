@@ -34,6 +34,15 @@ export type { ToolDefinition, ToolCallContext } from "./tools.js";
 export { registerFilesystemTools } from "./tools/filesystem.js";
 export type { FilesystemToolsOptions } from "./tools/filesystem.js";
 export {
+  NeedsConfirmationError,
+  formatCommandResult,
+  isAllowed,
+  registerShellTools,
+  runCommand,
+  tokenizeCommand,
+} from "./tools/shell.js";
+export type { RunCommandResult, ShellToolsOptions } from "./tools/shell.js";
+export {
   formatSearchResults,
   htmlToText,
   parseMojeekResults,
@@ -201,4 +210,4 @@ export type {
   JSONSchema,
 } from "./types.js";
 
-export const VERSION = "0.4.15";
+export const VERSION = "0.4.16";

@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import { render } from "ink";
 import React, { useState } from "react";
 import { loadApiKey, searchEnabled } from "../../config.js";
@@ -8,9 +9,15 @@ import { bridgeMcpTools } from "../../mcp/registry.js";
 import { parseMcpSpec } from "../../mcp/spec.js";
 import { SseTransport } from "../../mcp/sse.js";
 import { type McpTransport, StdioTransport } from "../../mcp/stdio.js";
+import {
+  loadSessionMessages,
+  rewriteSession,
+  sessionPath as sessionPathOf,
+} from "../../session.js";
 import { ToolRegistry } from "../../tools.js";
 import { registerWebTools } from "../../tools/web.js";
 import { App } from "../ui/App.js";
+import { SessionPicker } from "../ui/SessionPicker.js";
 import { Setup } from "../ui/Setup.js";
 import type { McpServerSummary } from "../ui/slash.js";
 
@@ -44,6 +51,10 @@ export interface ChatOptions {
    * Set by `reasonix code`; plain `reasonix chat` leaves this off.
    */
   codeMode?: { rootDir: string };
+  /** Skip the session picker — assume "Resume" (backwards-compatible auto-continue). */
+  forceResume?: boolean;
+  /** Skip the session picker — assume "New" (wipe the session file and start fresh). */
+  forceNew?: boolean;
 }
 
 interface RootProps extends ChatOptions {
@@ -59,10 +70,24 @@ interface RootProps extends ChatOptions {
    * React reconciliation (no effect-timing surprises).
    */
   progressSink: { current: ((info: ProgressInfo) => void) | null };
+  /** Present when the session has prior messages; drives the picker. */
+  sessionPreview?: { messageCount: number; lastActive: Date };
 }
 
-function Root({ initialKey, tools, mcpSpecs, mcpServers, progressSink, ...appProps }: RootProps) {
+function Root({
+  initialKey,
+  tools,
+  mcpSpecs,
+  mcpServers,
+  progressSink,
+  sessionPreview,
+  ...appProps
+}: RootProps) {
   const [key, setKey] = useState<string | undefined>(initialKey);
+  // `null` once the picker is resolved (or was never needed). Starts as
+  // the preview so we can render the picker once before mounting App.
+  const [pending, setPending] = useState<typeof sessionPreview>(sessionPreview);
+
   if (!key) {
     return (
       <Setup
@@ -74,6 +99,26 @@ function Root({ initialKey, tools, mcpSpecs, mcpServers, progressSink, ...appPro
     );
   }
   process.env.DEEPSEEK_API_KEY = key;
+
+  if (pending && appProps.session) {
+    return (
+      <SessionPicker
+        sessionName={appProps.session}
+        messageCount={pending.messageCount}
+        lastActive={pending.lastActive}
+        onChoose={(choice) => {
+          if (choice === "new" || choice === "delete") {
+            // Wipe the session file. "new" and "delete" do the same thing
+            // at this step — the distinction is only in the picker's
+            // wording. A future enhancement could archive on "new".
+            rewriteSession(appProps.session!, []);
+          }
+          setPending(undefined);
+        }}
+      />
+    );
+  }
+
   return (
     <App
       model={appProps.model}
@@ -198,6 +243,23 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
     registerWebTools(tools);
   }
 
+  // Decide whether to show the session picker. It's gated on: session
+  // persistence is on, the session file already has prior messages, and
+  // the caller didn't pre-commit to one of the choices via --resume /
+  // --new flags. `--new` wipes the file now (before the loop opens),
+  // so the App mounts against a fresh log.
+  let sessionPreview: { messageCount: number; lastActive: Date } | undefined;
+  if (opts.session && !opts.forceResume && !opts.forceNew) {
+    const prior = loadSessionMessages(opts.session);
+    if (prior.length > 0) {
+      const p = sessionPathOf(opts.session);
+      const mtime = existsSync(p) ? statSync(p).mtime : new Date();
+      sessionPreview = { messageCount: prior.length, lastActive: mtime };
+    }
+  } else if (opts.session && opts.forceNew) {
+    rewriteSession(opts.session, []);
+  }
+
   const { waitUntilExit } = render(
     <Root
       initialKey={initialKey}
@@ -205,6 +267,7 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
       mcpSpecs={mcpSpecs}
       mcpServers={mcpServers}
       progressSink={progressSink}
+      sessionPreview={sessionPreview}
       {...opts}
     />,
     // patchConsole:false — we never log to console during the TUI, and the

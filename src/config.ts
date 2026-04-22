@@ -50,6 +50,17 @@ export interface ReasonixConfig {
    * endpoint). Set to `false` to keep the session offline.
    */
   search?: boolean;
+  /**
+   * Per-project state keyed by absolute directory path. Written by the
+   * "always allow" choice on a shell confirmation prompt; merged into
+   * `registerShellTools({ extraAllowed })` when `reasonix code` runs
+   * against that directory again.
+   */
+  projects?: {
+    [absoluteRootDir: string]: {
+      shellAllowed?: string[];
+    };
+  };
 }
 
 export function defaultConfigPath(): string {
@@ -100,6 +111,38 @@ export function searchEnabled(path: string = defaultConfigPath()): boolean {
 export function saveApiKey(key: string, path: string = defaultConfigPath()): void {
   const cfg = readConfig(path);
   cfg.apiKey = key.trim();
+  writeConfig(cfg, path);
+}
+
+/**
+ * Read the persisted "always allow" shell-command prefixes for a
+ * given project root. Returns an empty array when nothing's stored.
+ */
+export function loadProjectShellAllowed(
+  rootDir: string,
+  path: string = defaultConfigPath(),
+): string[] {
+  const cfg = readConfig(path);
+  return cfg.projects?.[rootDir]?.shellAllowed ?? [];
+}
+
+/**
+ * Append a prefix to the project's shell-allowed list, dedup and
+ * persist. No-op if the prefix is empty/whitespace or already stored.
+ */
+export function addProjectShellAllowed(
+  rootDir: string,
+  prefix: string,
+  path: string = defaultConfigPath(),
+): void {
+  const trimmed = prefix.trim();
+  if (!trimmed) return;
+  const cfg = readConfig(path);
+  if (!cfg.projects) cfg.projects = {};
+  if (!cfg.projects[rootDir]) cfg.projects[rootDir] = {};
+  const existing = cfg.projects[rootDir].shellAllowed ?? [];
+  if (existing.includes(trimmed)) return;
+  cfg.projects[rootDir].shellAllowed = [...existing, trimmed];
   writeConfig(cfg, path);
 }
 

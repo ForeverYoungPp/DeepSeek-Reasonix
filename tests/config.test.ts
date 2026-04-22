@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  addProjectShellAllowed,
   isPlausibleKey,
   loadApiKey,
+  loadProjectShellAllowed,
   readConfig,
   redactKey,
   saveApiKey,
@@ -144,5 +146,24 @@ describe("config", () => {
     writeConfig({ apiKey: "sk-test123abcdefghijkl", search: true }, path);
     process.env.REASONIX_SEARCH = "off";
     expect(searchEnabled(path)).toBe(false);
+  });
+
+  it("loadProjectShellAllowed returns [] when nothing stored", () => {
+    expect(loadProjectShellAllowed("/some/project", path)).toEqual([]);
+  });
+
+  it("addProjectShellAllowed persists and dedups per project", () => {
+    addProjectShellAllowed("/a", "npm install", path);
+    addProjectShellAllowed("/a", "git commit", path);
+    addProjectShellAllowed("/a", "npm install", path); // dedup
+    addProjectShellAllowed("/b", "cargo add", path);
+    expect(loadProjectShellAllowed("/a", path)).toEqual(["npm install", "git commit"]);
+    expect(loadProjectShellAllowed("/b", path)).toEqual(["cargo add"]);
+  });
+
+  it("addProjectShellAllowed ignores empty / whitespace prefixes", () => {
+    addProjectShellAllowed("/a", "", path);
+    addProjectShellAllowed("/a", "   ", path);
+    expect(loadProjectShellAllowed("/a", path)).toEqual([]);
   });
 });

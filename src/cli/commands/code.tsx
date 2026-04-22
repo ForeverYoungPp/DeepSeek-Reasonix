@@ -19,9 +19,11 @@
  */
 
 import { basename, resolve } from "node:path";
+import { loadProjectShellAllowed } from "../../config.js";
 import { sanitizeName } from "../../session.js";
 import { ToolRegistry } from "../../tools.js";
 import { registerFilesystemTools } from "../../tools/filesystem.js";
+import { registerShellTools } from "../../tools/shell.js";
 import { chatCommand } from "./chat.js";
 
 export interface CodeOptions {
@@ -33,6 +35,10 @@ export interface CodeOptions {
   noSession?: boolean;
   /** Transcript file for replay/diff. */
   transcript?: string;
+  /** Skip the session picker — always resume prior messages. */
+  forceResume?: boolean;
+  /** Skip the session picker — always wipe prior messages and start fresh. */
+  forceNew?: boolean;
 }
 
 export async function codeCommand(opts: CodeOptions = {}): Promise<void> {
@@ -49,9 +55,15 @@ export async function codeCommand(opts: CodeOptions = {}): Promise<void> {
   // triggered R1's DSML hallucinations all through 0.4.x.
   const tools = new ToolRegistry();
   registerFilesystemTools(tools, { rootDir });
+  registerShellTools(tools, {
+    rootDir,
+    // Per-project "always allow" list persisted from prior ShellConfirm
+    // choices; merged on top of the built-in allowlist in shell.ts.
+    extraAllowed: loadProjectShellAllowed(rootDir),
+  });
 
   process.stderr.write(
-    `▸ reasonix code: rooted at ${rootDir}, session "${session ?? "(ephemeral)"}" · ${tools.size} native fs tool(s)\n`,
+    `▸ reasonix code: rooted at ${rootDir}, session "${session ?? "(ephemeral)"}" · ${tools.size} native tool(s)\n`,
   );
 
   await chatCommand({
@@ -62,5 +74,7 @@ export async function codeCommand(opts: CodeOptions = {}): Promise<void> {
     session,
     seedTools: tools,
     codeMode: { rootDir },
+    forceResume: opts.forceResume,
+    forceNew: opts.forceNew,
   });
 }
