@@ -68,17 +68,18 @@ export async function runCommand(opts: RunOptions): Promise<void> {
 
   // Optional MCP setup — mirrors chat's flow. Must happen before loop
   // construction so the tools make it into the prefix.
-  const mcpSpecs = opts.mcp ?? [];
+  const requestedSpecs = opts.mcp ?? [];
   const clients: McpClient[] = [];
   let tools: ToolRegistry | undefined;
-  if (mcpSpecs.length > 0) {
+  let successCount = 0;
+  if (requestedSpecs.length > 0) {
     tools = new ToolRegistry();
-    for (const raw of mcpSpecs) {
+    for (const raw of requestedSpecs) {
       try {
         const spec = parseMcpSpec(raw);
         const prefix = spec.name
           ? `${spec.name}_`
-          : mcpSpecs.length === 1 && opts.mcpPrefix
+          : requestedSpecs.length === 1 && opts.mcpPrefix
             ? opts.mcpPrefix
             : "";
         const transport: McpTransport =
@@ -94,12 +95,18 @@ export async function runCommand(opts: RunOptions): Promise<void> {
           `▸ MCP[${spec.name ?? "anon"}]: ${bridge.registeredNames.length} tool(s) from ${source}\n`,
         );
         clients.push(mcp);
+        successCount++;
       } catch (err) {
-        process.stderr.write(`MCP setup failed for "${raw}": ${(err as Error).message}\n`);
-        for (const c of clients) await c.close();
-        process.exit(1);
+        // Non-fatal — skip and continue, same as `reasonix chat`. A
+        // one-shot `run` invocation with a broken MCP server otherwise
+        // fails the whole run over a side-concern tool the task might
+        // not even touch.
+        process.stderr.write(
+          `▸ MCP setup SKIPPED for "${raw}": ${(err as Error).message}\n  → run \`reasonix setup\` to remove broken entries from your saved config.\n`,
+        );
       }
     }
+    if (successCount === 0) tools = undefined;
   }
 
   const client = new DeepSeekClient();

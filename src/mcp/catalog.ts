@@ -29,6 +29,12 @@ export interface CatalogEntry {
   note?: string;
 }
 
+// Every entry below is verified to exist on npm as of this release.
+// `fetch` and `sqlite` are deliberately *absent* — their reference
+// servers are Python-only (`pip install mcp-server-fetch`), so a Node
+// user running `npx -y @modelcontextprotocol/server-fetch` hits a 404
+// from the npm registry. We'd rather ship a smaller list that always
+// works than a longer list where two options silently 404 on the user.
 export const MCP_CATALOG: CatalogEntry[] = [
   {
     name: "filesystem",
@@ -36,11 +42,6 @@ export const MCP_CATALOG: CatalogEntry[] = [
     package: "@modelcontextprotocol/server-filesystem",
     userArgs: "<dir>",
     note: "the directory is a hard sandbox — the server refuses access outside it",
-  },
-  {
-    name: "fetch",
-    summary: "fetch URLs (markdown-friendly extraction, not a full browser)",
-    package: "@modelcontextprotocol/server-fetch",
   },
   {
     name: "memory",
@@ -52,12 +53,6 @@ export const MCP_CATALOG: CatalogEntry[] = [
     summary: "read issues, PRs, code search (needs GITHUB_PERSONAL_ACCESS_TOKEN)",
     package: "@modelcontextprotocol/server-github",
     note: "set GITHUB_PERSONAL_ACCESS_TOKEN in your env before spawning",
-  },
-  {
-    name: "sqlite",
-    summary: "read/write a sqlite database file",
-    package: "@modelcontextprotocol/server-sqlite",
-    userArgs: "<db.sqlite>",
   },
   {
     name: "puppeteer",

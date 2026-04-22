@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { readConfig } from "../config.js";
 import { VERSION } from "../index.js";
 import { chatCommand } from "./commands/chat.js";
 import { diffCommand } from "./commands/diff.js";
@@ -6,8 +7,10 @@ import { mcpListCommand } from "./commands/mcp.js";
 import { replayCommand } from "./commands/replay.js";
 import { runCommand } from "./commands/run.js";
 import { sessionsCommand } from "./commands/sessions.js";
+import { setupCommand } from "./commands/setup.js";
 import { statsCommand } from "./commands/stats.js";
 import { versionCommand } from "./commands/version.js";
+import { resolveDefaults } from "./resolve.js";
 
 const DEFAULT_SYSTEM =
   "You are Reasonix, a helpful DeepSeek-powered assistant. Be concise and accurate. Use tools when available.";
@@ -18,29 +21,59 @@ program
   .description("DeepSeek-native agent framework — built for cache hits and cheap tokens.")
   .version(VERSION);
 
+// `reasonix` with no subcommand → launch the friendliest flow.
+// First run (no config yet) → interactive setup wizard.
+// Otherwise → chat with saved defaults. This is the "one command to
+// rule them all" entry for non-power-users: they don't need to learn
+// `chat` / `setup` / `--mcp` — just type `reasonix`.
+program.action(async () => {
+  const cfg = readConfig();
+  if (!cfg.setupCompleted) {
+    await setupCommand({});
+    return;
+  }
+  const defaults = resolveDefaults({});
+  await chatCommand({
+    model: defaults.model,
+    system: DEFAULT_SYSTEM,
+    harvest: defaults.harvest,
+    branch: defaults.branch,
+    session: defaults.session,
+    mcp: defaults.mcp,
+  });
+});
+
+program
+  .command("setup")
+  .description("Interactive wizard — API key, preset, MCP servers. Re-run any time to reconfigure.")
+  .action(async () => {
+    await setupCommand({});
+  });
+
 program
   .command("chat")
   .description("Interactive Ink TUI with live cache/cost panel.")
-  .option("-m, --model <id>", "DeepSeek model id", "deepseek-chat")
+  .option("-m, --model <id>", "DeepSeek model id (overrides preset)")
   .option("-s, --system <prompt>", "System prompt (pinned in the immutable prefix)", DEFAULT_SYSTEM)
   .option("--transcript <path>", "Write a JSONL transcript to this path")
   .option(
+    "--preset <name>",
+    "Bundle of model + harvest + branch. One of: fast, smart, max. Overrides config.preset.",
+  )
+  .option(
     "--harvest",
-    "Extract typed plan state from R1 reasoning (Pillar 2, adds a cheap V3 call per turn)",
+    "Extract typed plan state from R1 reasoning (Pillar 2). Overrides preset's harvest setting.",
   )
   .option(
     "--branch <n>",
     "Self-consistency: run N parallel samples per turn and pick the most confident (disables streaming; enables harvest)",
     (v) => Number.parseInt(v, 10),
   )
-  .option(
-    "--session <name>",
-    "Use a named session (default: 'default'). Resume the same session next time.",
-  )
+  .option("--session <name>", "Use a named session (default: from config, usually 'default').")
   .option("--no-session", "Disable session persistence for this run (ephemeral chat)")
   .option(
     "--mcp <spec>",
-    'MCP server spec; repeatable. Forms: "name=cmd args..." (namespaced, tools get `name_` prefix) or "cmd args..." (anonymous). Example: --mcp "fs=npx -y @scope/fs /tmp" --mcp "gh=npx -y @scope/gh"',
+    'MCP server spec; repeatable. "name=cmd args...", "cmd args...", or a URL (http/https → SSE transport). Overrides config.mcp when provided.',
     (value: string, previous: string[] = []) => [...previous, value],
     [] as string[],
   )
@@ -48,26 +81,25 @@ program
     "--mcp-prefix <str>",
     "Global prefix applied to every MCP tool (only honored when no per-spec name is set; avoids collisions with a single anonymous server)",
   )
+  .option("--no-config", "Ignore `~/.reasonix/config.json` — useful for CI or reproducing issues")
   .action(async (opts) => {
-    // Default behavior: every chat is auto-saved to a session named 'default'
-    // and auto-resumed next launch. Pass --no-session to opt out, or
-    // --session <name> to use a different session.
-    let session: string | undefined;
-    if (opts.session === false) {
-      session = undefined; // --no-session
-    } else if (typeof opts.session === "string" && opts.session.length > 0) {
-      session = opts.session;
-    } else {
-      session = "default";
-    }
-    await chatCommand({
+    const defaults = resolveDefaults({
       model: opts.model,
+      harvest: opts.harvest,
+      branch: opts.branch,
+      mcp: opts.mcp as string[],
+      session: opts.session,
+      preset: opts.preset,
+      noConfig: opts.config === false,
+    });
+    await chatCommand({
+      model: defaults.model,
       system: opts.system,
       transcript: opts.transcript,
-      harvest: !!opts.harvest,
-      branch: Number.isFinite(opts.branch) && opts.branch > 1 ? opts.branch : undefined,
-      session,
-      mcp: opts.mcp as string[],
+      harvest: defaults.harvest,
+      branch: defaults.branch,
+      session: defaults.session,
+      mcp: defaults.mcp,
       mcpPrefix: opts.mcpPrefix,
     });
   });
@@ -75,12 +107,10 @@ program
 program
   .command("run <task>")
   .description("Run a single task non-interactively, streaming output.")
-  .option("-m, --model <id>", "DeepSeek model id", "deepseek-chat")
+  .option("-m, --model <id>", "DeepSeek model id (overrides preset)")
   .option("-s, --system <prompt>", "System prompt", DEFAULT_SYSTEM)
-  .option(
-    "--harvest",
-    "Extract typed plan state from R1 reasoning (Pillar 2, adds a cheap V3 call per turn)",
-  )
+  .option("--preset <name>", "Bundle of model + harvest + branch: fast | smart | max")
+  .option("--harvest", "Extract typed plan state from R1 reasoning (Pillar 2)")
   .option(
     "--branch <n>",
     "Self-consistency: run N parallel samples per turn and pick the most confident",
@@ -89,7 +119,7 @@ program
   .option("--transcript <path>", "Write a JSONL transcript to this path for replay/diff")
   .option(
     "--mcp <spec>",
-    'MCP server spec; repeatable. "name=cmd args..." or "cmd args...".',
+    'MCP server spec; repeatable. "name=cmd args...", "cmd args...", or a URL (http/https → SSE).',
     (value: string, previous: string[] = []) => [...previous, value],
     [] as string[],
   )
@@ -97,15 +127,24 @@ program
     "--mcp-prefix <str>",
     "Global prefix (only honored when no per-spec name is set; for a single anonymous server)",
   )
+  .option("--no-config", "Ignore `~/.reasonix/config.json` — useful for CI or reproducing issues")
   .action(async (task: string, opts) => {
+    const defaults = resolveDefaults({
+      model: opts.model,
+      harvest: opts.harvest,
+      branch: opts.branch,
+      mcp: opts.mcp as string[],
+      preset: opts.preset,
+      noConfig: opts.config === false,
+    });
     await runCommand({
       task,
-      model: opts.model,
+      model: defaults.model,
       system: opts.system,
-      harvest: !!opts.harvest,
-      branch: Number.isFinite(opts.branch) && opts.branch > 1 ? opts.branch : undefined,
+      harvest: defaults.harvest,
+      branch: defaults.branch,
       transcript: opts.transcript,
-      mcp: opts.mcp as string[],
+      mcp: defaults.mcp,
       mcpPrefix: opts.mcpPrefix,
     });
   });

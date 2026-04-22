@@ -27,9 +27,10 @@ export interface ChatOptions {
 interface RootProps extends ChatOptions {
   initialKey: string | undefined;
   tools: ToolRegistry | undefined;
+  mcpSpecs: string[];
 }
 
-function Root({ initialKey, tools, ...appProps }: RootProps) {
+function Root({ initialKey, tools, mcpSpecs, ...appProps }: RootProps) {
   const [key, setKey] = useState<string | undefined>(initialKey);
   if (!key) {
     return (
@@ -51,6 +52,7 @@ function Root({ initialKey, tools, ...appProps }: RootProps) {
       branch={appProps.branch}
       session={appProps.session}
       tools={tools}
+      mcpSpecs={mcpSpecs}
     />
   );
 }
@@ -59,18 +61,20 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
   loadDotenv();
   const initialKey = loadApiKey();
 
-  const mcpSpecs = opts.mcp ?? [];
+  const requestedSpecs = opts.mcp ?? [];
   const clients: McpClient[] = [];
+  const successfulSpecs: string[] = [];
+  const failedSpecs: Array<{ spec: string; reason: string }> = [];
   let tools: ToolRegistry | undefined;
 
-  if (mcpSpecs.length > 0) {
+  if (requestedSpecs.length > 0) {
     tools = new ToolRegistry();
-    for (const raw of mcpSpecs) {
+    for (const raw of requestedSpecs) {
       try {
         const spec = parseMcpSpec(raw);
         const prefix = spec.name
           ? `${spec.name}_`
-          : mcpSpecs.length === 1 && opts.mcpPrefix
+          : requestedSpecs.length === 1 && opts.mcpPrefix
             ? opts.mcpPrefix
             : "";
         const transport: McpTransport =
@@ -87,17 +91,32 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
           `▸ MCP[${label}]: ${bridge.registeredNames.length} tool(s) from ${source}\n`,
         );
         clients.push(mcp);
+        successfulSpecs.push(raw);
       } catch (err) {
-        process.stderr.write(`MCP setup failed for "${raw}": ${(err as Error).message}\n`);
-        for (const c of clients) await c.close();
-        process.exit(1);
+        // Per-server failure is non-fatal: one broken server shouldn't
+        // kill a chat that has working servers configured. We record
+        // the failure, show a visible warning, and keep going. User
+        // can fix via `reasonix setup` (unchecks the broken entry)
+        // without losing their other servers.
+        const reason = (err as Error).message;
+        failedSpecs.push({ spec: raw, reason });
+        process.stderr.write(
+          `▸ MCP setup SKIPPED for "${raw}": ${reason}\n  → this server will not be available this session. Run \`reasonix setup\` to remove it, or fix the underlying issue (missing npm package, network, etc.).\n`,
+        );
       }
     }
+    // If every requested server failed, drop the empty registry so the
+    // loop still runs as a bare chat instead of advertising zero tools.
+    if (successfulSpecs.length === 0) {
+      tools = undefined;
+    }
   }
+  const mcpSpecs = successfulSpecs;
 
-  const { waitUntilExit } = render(<Root initialKey={initialKey} tools={tools} {...opts} />, {
-    exitOnCtrlC: true,
-  });
+  const { waitUntilExit } = render(
+    <Root initialKey={initialKey} tools={tools} mcpSpecs={mcpSpecs} {...opts} />,
+    { exitOnCtrlC: true },
+  );
   try {
     await waitUntilExit();
   } finally {

@@ -12,6 +12,21 @@ export interface SlashResult {
   unknown?: boolean;
 }
 
+/**
+ * Extra runtime context a slash handler may care about but that isn't
+ * already on the loop. Kept as an optional object so tests that only
+ * need loop-scoped commands can skip it, and callers only populate the
+ * slots that apply to their session.
+ */
+export interface SlashContext {
+  /**
+   * The exact `--mcp` / config-derived spec strings that were bridged
+   * into this session (one entry per server). Used by `/mcp`. Empty or
+   * omitted → no MCP servers attached.
+   */
+  mcpSpecs?: string[];
+}
+
 export function parseSlash(text: string): { cmd: string; args: string[] } | null {
   if (!text.startsWith("/")) return null;
   const parts = text.slice(1).trim().split(/\s+/);
@@ -20,7 +35,12 @@ export function parseSlash(text: string): { cmd: string; args: string[] } | null
   return { cmd, args: parts.slice(1) };
 }
 
-export function handleSlash(cmd: string, args: string[], loop: CacheFirstLoop): SlashResult {
+export function handleSlash(
+  cmd: string,
+  args: string[],
+  loop: CacheFirstLoop,
+  ctx: SlashContext = {},
+): SlashResult {
   switch (cmd) {
     case "exit":
     case "quit":
@@ -40,6 +60,8 @@ export function handleSlash(cmd: string, args: string[], loop: CacheFirstLoop): 
           "  /model <id>              deepseek-chat or deepseek-reasoner",
           "  /harvest [on|off]        Pillar 2: structured plan-state extraction",
           "  /branch <N|off>          run N parallel samples (N>=2), pick most confident",
+          "  /mcp                     list MCP servers + tools attached to this session",
+          "  /setup                   (exit + reconfigure) → run `reasonix setup`",
           "  /sessions                list saved sessions (current is marked with ▸)",
           "  /forget                  delete the current session from disk",
           "  /clear                   clear displayed history (log + session kept)",
@@ -54,6 +76,38 @@ export function handleSlash(cmd: string, args: string[], loop: CacheFirstLoop): 
           "  reasonix chat --session <name>   use a different named session",
           "  reasonix chat --no-session       disable persistence for this run",
         ].join("\n"),
+      };
+
+    case "mcp": {
+      const specs = ctx.mcpSpecs ?? [];
+      const toolSpecs = loop.prefix.toolSpecs ?? [];
+      if (specs.length === 0 && toolSpecs.length === 0) {
+        return {
+          info:
+            "no MCP servers attached. Run `reasonix setup` to pick some, " +
+            'or launch with --mcp "<spec>". `reasonix mcp list` shows the catalog.',
+        };
+      }
+      const lines: string[] = [];
+      if (specs.length > 0) {
+        lines.push(`MCP servers (${specs.length}):`);
+        for (const spec of specs) lines.push(`  · ${spec}`);
+        lines.push("");
+      }
+      if (toolSpecs.length > 0) {
+        lines.push(`Tools in registry (${toolSpecs.length}):`);
+        for (const t of toolSpecs) lines.push(`  · ${t.function.name}`);
+      }
+      lines.push("");
+      lines.push("To change this set, exit and run `reasonix setup`.");
+      return { info: lines.join("\n") };
+    }
+
+    case "setup":
+      return {
+        info:
+          "To reconfigure (preset, MCP servers, API key), exit this chat and run " +
+          "`reasonix setup`. Changes take effect on next launch.",
       };
 
     case "sessions": {

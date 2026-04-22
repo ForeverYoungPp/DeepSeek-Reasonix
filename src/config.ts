@@ -8,15 +8,42 @@
  * The library itself never touches the config file — it only reads
  * `DEEPSEEK_API_KEY` from the environment. The CLI is responsible for
  * pulling from the config file and exposing it via env var to the loop.
+ *
+ * Beyond the API key, the config also remembers the user's *defaults*
+ * from `reasonix setup`: preset, MCP servers, session. This is what
+ * makes `reasonix chat` with no flags "just work" after first-run.
  */
 
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+/** One of the preset bundles (model + harvest + branch combo). */
+export type PresetName = "fast" | "smart" | "max";
+
 export interface ReasonixConfig {
   apiKey?: string;
   baseUrl?: string;
+  /**
+   * Default preset for `reasonix chat` / `reasonix run` when no flags override.
+   * Maps to model + harvest + branch combos (see presets.ts). Missing → "fast".
+   */
+  preset?: PresetName;
+  /**
+   * Default MCP server specs to bridge on every `reasonix chat`, in the
+   * same `"name=cmd args..."` format that `--mcp` takes. Stored as strings
+   * so `reasonix setup` stays symmetrical with the flag — one parser, one
+   * format in the config file, grep-friendly.
+   */
+  mcp?: string[];
+  /**
+   * Default session name (null/missing → "default", which is what the
+   * CLI has been doing anyway). `reasonix setup` lets users pick a name
+   * or opt into ephemeral.
+   */
+  session?: string | null;
+  /** Marks that `reasonix setup` has completed at least once. */
+  setupCompleted?: boolean;
 }
 
 export function defaultConfigPath(): string {

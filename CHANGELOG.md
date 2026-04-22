@@ -3,6 +3,99 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0-alpha.5] — 2026-04-21
+
+**Headline:** `reasonix setup` replaces the CLI-flag maze. New users run
+one command, pick from an arrow-key checklist, and every later launch
+remembers what they chose. The `--mcp "name=npx -y @scope/pkg /path"`
+syntax still works for scripts and power users — it's just no longer
+the *only* way to turn MCP on.
+
+### Added
+
+- **`reasonix setup`** — interactive Ink wizard:
+  1. Paste API key (skipped if already set via env or previous run)
+  2. Pick a preset: `fast` / `smart` / `max` (bundles of model +
+     harvest + branch budget — no more "what's the right model id?")
+  3. Multi-select MCP servers from the curated catalog (space to
+     toggle, enter to confirm). Per-server parameters (filesystem
+     directory, sqlite path) are prompted inline.
+  4. Review + save to `~/.reasonix/config.json`.
+  Re-run any time to reconfigure — existing selections are pre-checked.
+- **`reasonix` with no subcommand** — launches the wizard on first run,
+  drops straight into chat afterwards using saved defaults. Designed
+  so a brand-new user can `npx reasonix` and be chatting in 30s
+  without reading `--help`.
+- **`--preset <fast|smart|max>`** on both `chat` and `run`. Picks the
+  same bundles the wizard offers. Individual flags (`--model`,
+  `--harvest`, `--branch`) still override when you want to be specific.
+- **`--no-config`** escape hatch on `chat` and `run` — ignore
+  `~/.reasonix/config.json` entirely (useful for CI, reproducing
+  a bug report against default settings, or isolating shared boxes).
+- **`/mcp` slash command** — shows the spec strings attached to the
+  current session and the tool registry (handy mid-chat when you want
+  to remember what a tool is called).
+- **`/setup` slash command** — prints instructions to exit and re-run
+  `reasonix setup`. Live reconfiguration mid-session is out of scope:
+  changing the tool set would reset the byte-stable prefix and
+  invalidate the cache-first guarantees that define Reasonix.
+
+### Changed
+
+- **`ReasonixConfig` schema** grows: `preset`, `mcp` (spec strings),
+  `session`, `setupCompleted`. Previous configs (apiKey-only) still
+  load; missing fields fall through to hardcoded defaults.
+- `reasonix chat` / `reasonix run`: when a flag is not passed, the
+  value comes from `~/.reasonix/config.json`. Explicit flags still
+  win. `--no-config` short-circuits this.
+- Slash handler signature: `handleSlash(cmd, args, loop, ctx?)` — the
+  new `ctx` carries per-session state like `mcpSpecs`. Old callers
+  that passed three args continue to compile.
+
+### Tests (+21)
+
+- `tests/resolve.test.ts` (+11) — precedence order: flag → --preset
+  → config.preset → fast defaults; `--no-config`, `--no-session`,
+  `--branch` cap and off cases.
+- `tests/config.test.ts` (+2) — full `ReasonixConfig` round-trip,
+  `session: null` interpreted as ephemeral.
+- `tests/slash.test.ts` (+4) — `/mcp` empty + populated, `/setup`
+  prints the reconfigure hint, help lists both.
+- `tests/wizard.test.ts` (+4) — `buildSpec` → `parseMcpSpec`
+  round-trip on filesystem / memory / spaces-in-path / unknown-entry
+  degrade-gracefully.
+- Suite: **262 passing** (was 241).
+
+### Fixed
+
+- **Catalog no longer lists Python-only servers.** `fetch` and `sqlite`
+  reference MCP servers are distributed as `pip install
+  mcp-server-fetch` / `mcp-server-sqlite`, not npm packages. They
+  were in the catalog by mistake, which meant picking them in the
+  wizard produced a spec that always 404'd on `npm install` when the
+  child was spawned. Removed. The remaining five entries
+  (`filesystem`, `memory`, `github`, `puppeteer`, `everything`) are
+  verified-on-npm as of this release.
+- **One broken MCP server no longer kills the whole chat/run.** Before:
+  any spawn or initialize failure on any server called
+  `process.exit(1)`, losing the session and the other working servers.
+  Now: each failure prints a `▸ MCP setup SKIPPED` line pointing at
+  `reasonix setup` and the session continues with whatever succeeded.
+
+### Notes
+
+- The wizard's Ink rendering is verified manually — unit-testing
+  arrow-key handling would mean pulling in `ink-testing-library`
+  (another dev dep) to exercise mechanically obvious `setState`
+  calls. The pure data layer (what gets written to config.json) is
+  tested end-to-end via `buildSpec → parseMcpSpec`.
+- Existing `npm publish --tag alpha` users: if you published
+  alpha.4 already, alpha.5 is a *pure additive* upgrade — config
+  files written by alpha.4 continue to work; `setupCompleted: false`
+  is assumed on migration so the wizard offers itself on first launch.
+
+---
+
 ## [0.3.0-alpha.4] — 2026-04-21
 
 **Headline:** MCP over HTTP+SSE. Bridge *remote* / hosted MCP servers,

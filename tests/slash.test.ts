@@ -116,6 +116,30 @@ describe("handleSlash", () => {
     expect(r.info).toMatch(/unknown command/);
   });
 
+  it("/mcp with no servers attached points at reasonix setup", () => {
+    const r = handleSlash("mcp", [], makeLoop());
+    expect(r.info).toMatch(/no MCP servers/);
+    expect(r.info).toMatch(/reasonix setup/);
+  });
+
+  it("/mcp shows the spec strings from SlashContext", () => {
+    const r = handleSlash("mcp", [], makeLoop(), {
+      mcpSpecs: [
+        "filesystem=npx -y @modelcontextprotocol/server-filesystem /tmp",
+        "kb=https://kb.example.com/sse",
+      ],
+    });
+    expect(r.info).toMatch(/MCP servers \(2\)/);
+    expect(r.info).toMatch(/server-filesystem/);
+    expect(r.info).toMatch(/kb.example.com/);
+  });
+
+  it("/setup prints instructions to exit and run reasonix setup", () => {
+    const r = handleSlash("setup", [], makeLoop());
+    expect(r.info).toMatch(/reasonix setup/);
+    expect(r.exit).toBeUndefined(); // /setup doesn't auto-exit — user presses /exit
+  });
+
   it("/preset fast = deepseek-chat, no harvest, no branch", () => {
     const loop = makeLoop();
     handleSlash("model", ["deepseek-reasoner"], loop);
@@ -160,6 +184,12 @@ describe("handleSlash", () => {
     const r = handleSlash("help", [], makeLoop());
     expect(r.info).toMatch(/\/sessions/);
     expect(r.info).toMatch(/\/forget/);
+  });
+
+  it("/help mentions /mcp and /setup", () => {
+    const r = handleSlash("help", [], makeLoop());
+    expect(r.info).toMatch(/\/mcp/);
+    expect(r.info).toMatch(/\/setup/);
   });
 
   it("/sessions returns a hint when none exist", () => {

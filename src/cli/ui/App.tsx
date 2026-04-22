@@ -24,6 +24,8 @@ export interface AppProps {
    * and its dispatch is used for tool calls — MCP tools become first-class.
    */
   tools?: ToolRegistry;
+  /** Raw `--mcp` / config-derived spec strings, for `/mcp` slash display. */
+  mcpSpecs?: string[];
 }
 
 /**
@@ -39,7 +41,16 @@ interface StreamingState {
   reasoning: string;
 }
 
-export function App({ model, system, transcript, harvest, branch, session, tools }: AppProps) {
+export function App({
+  model,
+  system,
+  transcript,
+  harvest,
+  branch,
+  session,
+  tools,
+  mcpSpecs,
+}: AppProps) {
   const { exit } = useApp();
   const [historical, setHistorical] = useState<DisplayEvent[]>([]);
   const [streaming, setStreaming] = useState<DisplayEvent | null>(null);
@@ -134,7 +145,7 @@ export function App({ model, system, transcript, harvest, branch, session, tools
       setInput("");
       const slash = parseSlash(text);
       if (slash) {
-        const result = handleSlash(slash.cmd, slash.args, loop);
+        const result = handleSlash(slash.cmd, slash.args, loop, { mcpSpecs });
         if (result.exit) {
           transcriptRef.current?.end();
           exit();
@@ -256,7 +267,7 @@ export function App({ model, system, transcript, harvest, branch, session, tools
         setBusy(false);
       }
     },
-    [busy, exit, loop, writeTranscript],
+    [busy, exit, loop, mcpSpecs, writeTranscript],
   );
 
   return (
@@ -284,8 +295,7 @@ function CommandStrip() {
   return (
     <Box paddingX={2}>
       <Text dimColor>
-        /help · /preset {"<fast|smart|max>"} · /sessions · /model · /harvest · /branch · /clear ·
-        /exit
+        /help · /preset {"<fast|smart|max>"} · /mcp · /sessions · /setup · /clear · /exit
       </Text>
     </Box>
   );

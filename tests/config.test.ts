@@ -79,4 +79,31 @@ describe("config", () => {
     expect(redactKey("short")).toBe("****");
     expect(redactKey("")).toBe("");
   });
+
+  it("round-trips the full ReasonixConfig (preset, mcp, session, setupCompleted)", () => {
+    writeConfig(
+      {
+        apiKey: "sk-test123abcdefghijkl",
+        preset: "smart",
+        mcp: [
+          "filesystem=npx -y @modelcontextprotocol/server-filesystem /tmp/safe",
+          "memory=npx -y @modelcontextprotocol/server-memory",
+        ],
+        session: "work",
+        setupCompleted: true,
+      },
+      path,
+    );
+    const loaded = readConfig(path);
+    expect(loaded.preset).toBe("smart");
+    expect(loaded.mcp).toHaveLength(2);
+    expect(loaded.session).toBe("work");
+    expect(loaded.setupCompleted).toBe(true);
+  });
+
+  it("session: null in the config means the user opted out of persistence", () => {
+    writeConfig({ apiKey: "sk-xxxxxxxxxxxxxxxxxxxx", session: null }, path);
+    const loaded = readConfig(path);
+    expect(loaded.session).toBeNull();
+  });
 });
