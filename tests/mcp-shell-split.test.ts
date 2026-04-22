@@ -26,8 +26,10 @@ describe("shellSplit", () => {
     expect(shellSplit('cmd "a\\"b"')).toEqual(["cmd", 'a"b']);
   });
 
-  it("handles escaped spaces outside quotes", () => {
-    expect(shellSplit("cmd foo\\ bar baz")).toEqual(["cmd", "foo bar", "baz"]);
+  it("passes backslashes through literally OUTSIDE quotes (so Windows paths don't mangle)", () => {
+    // Critical for `reasonix chat --mcp "... C:\\path\\to\\dir"`. Users
+    // who want to escape a space outside quotes can quote the arg.
+    expect(shellSplit("cmd C:\\path\\to\\file.exe")).toEqual(["cmd", "C:\\path\\to\\file.exe"]);
   });
 
   it("throws on unterminated double quote", () => {

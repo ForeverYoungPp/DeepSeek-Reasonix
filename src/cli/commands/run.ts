@@ -6,9 +6,9 @@ import { loadDotenv } from "../../env.js";
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
 import { McpClient } from "../../mcp/client.js";
 import { bridgeMcpTools } from "../../mcp/registry.js";
-import { shellSplit } from "../../mcp/shell-split.js";
+import { parseMcpSpec } from "../../mcp/spec.js";
 import { StdioTransport } from "../../mcp/stdio.js";
-import type { ToolRegistry } from "../../tools.js";
+import { ToolRegistry } from "../../tools.js";
 import { openTranscriptFile, recordFromLoopEvent, writeRecord } from "../../transcript.js";
 
 export interface RunOptions {
@@ -21,9 +21,9 @@ export interface RunOptions {
   branch?: number;
   /** JSONL transcript path — lets `reasonix replay` / `diff` audit this run. */
   transcript?: string;
-  /** Shell-style command string for an MCP server to bridge tools from. */
-  mcp?: string;
-  /** Name prefix for bridged MCP tools. */
+  /** Zero or more MCP server specs. Each: `"name=cmd args..."` or `"cmd args..."`. */
+  mcp?: string[];
+  /** Global prefix — only honored when a single anonymous server is given. */
   mcpPrefix?: string;
 }
 
@@ -67,27 +67,33 @@ export async function runCommand(opts: RunOptions): Promise<void> {
 
   // Optional MCP setup — mirrors chat's flow. Must happen before loop
   // construction so the tools make it into the prefix.
-  let mcp: McpClient | undefined;
+  const mcpSpecs = opts.mcp ?? [];
+  const clients: McpClient[] = [];
   let tools: ToolRegistry | undefined;
-  if (opts.mcp) {
-    const argv = shellSplit(opts.mcp);
-    const [command, ...args] = argv;
-    if (!command) {
-      process.stderr.write("error: --mcp command is empty\n");
-      process.exit(2);
-    }
-    mcp = new McpClient({ transport: new StdioTransport({ command, args }) });
-    try {
-      await mcp.initialize();
-      const bridge = await bridgeMcpTools(mcp, { namePrefix: opts.mcpPrefix });
-      tools = bridge.registry;
-      process.stderr.write(
-        `▸ MCP: ${bridge.registeredNames.length} tool(s) from ${argv.join(" ")}\n`,
-      );
-    } catch (err) {
-      process.stderr.write(`MCP setup failed: ${(err as Error).message}\n`);
-      await mcp.close();
-      process.exit(1);
+  if (mcpSpecs.length > 0) {
+    tools = new ToolRegistry();
+    for (const raw of mcpSpecs) {
+      try {
+        const spec = parseMcpSpec(raw);
+        const prefix = spec.name
+          ? `${spec.name}_`
+          : mcpSpecs.length === 1 && opts.mcpPrefix
+            ? opts.mcpPrefix
+            : "";
+        const mcp = new McpClient({
+          transport: new StdioTransport({ command: spec.command, args: spec.args }),
+        });
+        await mcp.initialize();
+        const bridge = await bridgeMcpTools(mcp, { registry: tools, namePrefix: prefix });
+        process.stderr.write(
+          `▸ MCP[${spec.name ?? "anon"}]: ${bridge.registeredNames.length} tool(s) from ${spec.command} ${spec.args.join(" ")}\n`,
+        );
+        clients.push(mcp);
+      } catch (err) {
+        process.stderr.write(`MCP setup failed for "${raw}": ${(err as Error).message}\n`);
+        for (const c of clients) await c.close();
+        process.exit(1);
+      }
     }
   }
 
@@ -150,5 +156,5 @@ export async function runCommand(opts: RunOptions): Promise<void> {
     process.stdout.write(`  → npx reasonix replay ${opts.transcript}\n`);
   }
 
-  await mcp?.close();
+  for (const c of clients) await c.close();
 }

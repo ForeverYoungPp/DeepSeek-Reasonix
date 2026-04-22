@@ -50,17 +50,23 @@ tests/mcp.test.ts — 10 tests, in-process fake transport, no child processes
 
 ## Usage (CLI)
 
-Spawn an MCP server alongside chat / run, its tools become first-class:
+`--mcp` is repeatable — attach one or many MCP servers; their tools become
+first-class citizens of the loop.
 
 ```bash
-# Against the bundled demo server (no external install required):
+# Single server, anonymous (tools use native names):
 reasonix chat --mcp "node --import tsx examples/mcp-server-demo.ts"
 
-# Against the official filesystem server:
+# Official filesystem server:
 reasonix chat --mcp "npx -y @modelcontextprotocol/server-filesystem /tmp/safe-dir"
 
-# Optional name prefix when mixing multiple servers (future) or to
-# disambiguate:
+# Multiple servers, each namespaced. Syntax: "name=command args..."
+# Tools land in a shared registry as fs_read_file, demo_add, etc.
+reasonix chat \
+  --mcp "fs=npx -y @modelcontextprotocol/server-filesystem /tmp/safe" \
+  --mcp "demo=node --import tsx examples/mcp-server-demo.ts"
+
+# Global prefix (only honored when there's ONE anonymous server):
 reasonix chat \
   --mcp "npx -y @modelcontextprotocol/server-filesystem /tmp" \
   --mcp-prefix fs_
@@ -70,11 +76,12 @@ reasonix run "list files in /tmp/safe-dir" \
   --mcp "npx -y @modelcontextprotocol/server-filesystem /tmp/safe-dir"
 ```
 
-`--mcp` accepts a shell-style string (spaces separate args; use quotes for
-paths containing spaces). The tools land in a ToolRegistry, get folded
-into the ImmutablePrefix for the model, and every call goes through
-Reasonix's Cache-First loop + tool-call repair (scavenge / flatten /
-storm) automatically.
+Each spec is shell-split (spaces separate args; use quotes for paths with
+spaces). Windows-friendly: backslashes pass through literally outside
+quotes, so `C:\path\to\dir` works. Tools get folded into the
+`ImmutablePrefix` for the model, and every call goes through Reasonix's
+Cache-First loop + tool-call repair (scavenge / flatten / storm)
+automatically.
 
 ## Usage (library)
 

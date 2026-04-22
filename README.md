@@ -120,6 +120,12 @@ npx reasonix replay benchmarks/tau-bench/transcripts/mcp-filesystem.jsonl
 reasonix chat --mcp "node --import tsx examples/mcp-server-demo.ts"
 # or against the real filesystem server:
 reasonix chat --mcp "npx -y @modelcontextprotocol/server-filesystem /path/to/safe/dir"
+
+# Multiple servers at once — each gets its own namespace prefix:
+reasonix chat \
+  --mcp "fs=npx -y @modelcontextprotocol/server-filesystem /tmp/safe" \
+  --mcp "demo=node --import tsx examples/mcp-server-demo.ts"
+# Tools land in a shared registry as fs_read_file, demo_add, etc.
 ```
 
 [mcp]: ./benchmarks/tau-bench/transcripts/mcp-demo.add.jsonl

@@ -44,11 +44,10 @@ export function shellSplit(input: string): string[] {
       continue;
     }
 
-    if (ch === "\\" && i + 1 < s.length) {
-      cur += s[i + 1];
-      i += 2;
-      continue;
-    }
+    // Backslash escape ONLY applies inside double quotes (handled above).
+    // Outside quotes, backslashes pass through literally — otherwise
+    // Windows paths like `C:\path\to\exe` get mangled. POSIX users who
+    // want to escape a space outside quotes can use single quotes instead.
 
     if (ch === " " || ch === "\t") {
       if (cur.length > 0) {

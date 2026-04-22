@@ -38,10 +38,15 @@ program
   )
   .option("--no-session", "Disable session persistence for this run (ephemeral chat)")
   .option(
-    "--mcp <command>",
-    'Spawn an MCP server and bridge its tools. Shell-quoted: --mcp "npx -y @scope/server-x /path"',
+    "--mcp <spec>",
+    'MCP server spec; repeatable. Forms: "name=cmd args..." (namespaced, tools get `name_` prefix) or "cmd args..." (anonymous). Example: --mcp "fs=npx -y @scope/fs /tmp" --mcp "gh=npx -y @scope/gh"',
+    (value: string, previous: string[] = []) => [...previous, value],
+    [] as string[],
   )
-  .option("--mcp-prefix <str>", "Prefix prepended to every MCP tool name (avoid collisions)")
+  .option(
+    "--mcp-prefix <str>",
+    "Global prefix applied to every MCP tool (only honored when no per-spec name is set; avoids collisions with a single anonymous server)",
+  )
   .action(async (opts) => {
     // Default behavior: every chat is auto-saved to a session named 'default'
     // and auto-resumed next launch. Pass --no-session to opt out, or
@@ -61,7 +66,7 @@ program
       harvest: !!opts.harvest,
       branch: Number.isFinite(opts.branch) && opts.branch > 1 ? opts.branch : undefined,
       session,
-      mcp: opts.mcp,
+      mcp: opts.mcp as string[],
       mcpPrefix: opts.mcpPrefix,
     });
   });
@@ -82,10 +87,15 @@ program
   )
   .option("--transcript <path>", "Write a JSONL transcript to this path for replay/diff")
   .option(
-    "--mcp <command>",
-    'Spawn an MCP server and bridge its tools. Shell-quoted: --mcp "npx -y @scope/server-x /path"',
+    "--mcp <spec>",
+    'MCP server spec; repeatable. "name=cmd args..." or "cmd args...".',
+    (value: string, previous: string[] = []) => [...previous, value],
+    [] as string[],
   )
-  .option("--mcp-prefix <str>", "Prefix prepended to every MCP tool name (avoid collisions)")
+  .option(
+    "--mcp-prefix <str>",
+    "Global prefix (only honored when no per-spec name is set; for a single anonymous server)",
+  )
   .action(async (task: string, opts) => {
     await runCommand({
       task,
@@ -94,7 +104,7 @@ program
       harvest: !!opts.harvest,
       branch: Number.isFinite(opts.branch) && opts.branch > 1 ? opts.branch : undefined,
       transcript: opts.transcript,
-      mcp: opts.mcp,
+      mcp: opts.mcp as string[],
       mcpPrefix: opts.mcpPrefix,
     });
   });

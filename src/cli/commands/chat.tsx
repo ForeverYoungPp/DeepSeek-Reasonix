@@ -4,9 +4,9 @@ import { loadApiKey } from "../../config.js";
 import { loadDotenv } from "../../env.js";
 import { McpClient } from "../../mcp/client.js";
 import { bridgeMcpTools } from "../../mcp/registry.js";
-import { shellSplit } from "../../mcp/shell-split.js";
+import { parseMcpSpec } from "../../mcp/spec.js";
 import { StdioTransport } from "../../mcp/stdio.js";
-import type { ToolRegistry } from "../../tools.js";
+import { ToolRegistry } from "../../tools.js";
 import { App } from "../ui/App.js";
 import { Setup } from "../ui/Setup.js";
 
@@ -17,9 +17,9 @@ export interface ChatOptions {
   harvest?: boolean;
   branch?: number;
   session?: string;
-  /** Shell-style command string: `"npx -y @modelcontextprotocol/server-filesystem /tmp"`. */
-  mcp?: string;
-  /** Name prefix applied to every MCP tool so names from multiple servers don't collide. */
+  /** Zero or more MCP server specs. Each: `"name=cmd args..."` or `"cmd args..."`. */
+  mcp?: string[];
+  /** Global prefix — only used when a single anonymous server is given. */
   mcpPrefix?: string;
 }
 
@@ -58,35 +58,34 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
   loadDotenv();
   const initialKey = loadApiKey();
 
-  // Spawn + bridge any MCP server BEFORE rendering. This surfaces spawn
-  // errors up-front (clearer than seeing them mid-TUI) and gives us a
-  // ready ToolRegistry to hand to the loop.
-  let mcp: McpClient | undefined;
+  const mcpSpecs = opts.mcp ?? [];
+  const clients: McpClient[] = [];
   let tools: ToolRegistry | undefined;
-  if (opts.mcp) {
-    const argv = shellSplit(opts.mcp);
-    if (argv.length === 0) {
-      process.stderr.write("error: --mcp requires a command\n");
-      process.exit(2);
-    }
-    const [command, ...args] = argv;
-    if (!command) {
-      process.stderr.write("error: --mcp command is empty\n");
-      process.exit(2);
-    }
-    const transport = new StdioTransport({ command, args });
-    mcp = new McpClient({ transport });
-    try {
-      await mcp.initialize();
-      const bridge = await bridgeMcpTools(mcp, { namePrefix: opts.mcpPrefix });
-      tools = bridge.registry;
-      process.stderr.write(
-        `▸ MCP: ${bridge.registeredNames.length} tool(s) from ${argv.join(" ")}\n`,
-      );
-    } catch (err) {
-      process.stderr.write(`MCP setup failed: ${(err as Error).message}\n`);
-      await mcp.close();
-      process.exit(1);
+
+  if (mcpSpecs.length > 0) {
+    tools = new ToolRegistry();
+    for (const raw of mcpSpecs) {
+      try {
+        const spec = parseMcpSpec(raw);
+        const prefix = spec.name
+          ? `${spec.name}_`
+          : mcpSpecs.length === 1 && opts.mcpPrefix
+            ? opts.mcpPrefix
+            : "";
+        const transport = new StdioTransport({ command: spec.command, args: spec.args });
+        const mcp = new McpClient({ transport });
+        await mcp.initialize();
+        const bridge = await bridgeMcpTools(mcp, { registry: tools, namePrefix: prefix });
+        const label = spec.name ?? "anon";
+        process.stderr.write(
+          `▸ MCP[${label}]: ${bridge.registeredNames.length} tool(s) from ${spec.command} ${spec.args.join(" ")}\n`,
+        );
+        clients.push(mcp);
+      } catch (err) {
+        process.stderr.write(`MCP setup failed for "${raw}": ${(err as Error).message}\n`);
+        for (const c of clients) await c.close();
+        process.exit(1);
+      }
     }
   }
 
@@ -96,6 +95,6 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
   try {
     await waitUntilExit();
   } finally {
-    await mcp?.close();
+    for (const c of clients) await c.close();
   }
 }
