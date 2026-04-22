@@ -20,6 +20,7 @@ export type EventRole =
   | "tool"
   | "done"
   | "error"
+  | "warning"
   | "branch_start"
   | "branch_progress"
   | "branch_done";
@@ -128,6 +129,12 @@ export class CacheFirstLoop {
 
   private _turn = 0;
   private _streamPreference: boolean;
+  /**
+   * Set by {@link abort} to short-circuit the tool-call loop after the
+   * current iteration. Reset at the start of each `step()` so an Esc
+   * during one turn doesn't poison the next.
+   */
+  private _aborted = false;
 
   constructor(opts: CacheFirstLoopOptions) {
     this.client = opts.client;
@@ -282,13 +289,47 @@ export class CacheFirstLoop {
     return msgs;
   }
 
+  /**
+   * Signal the currently-running {@link step} that the user wants to
+   * stop exploring. Takes effect at the next iteration boundary — if a
+   * tool call is mid-flight it will be allowed to finish, then the
+   * loop diverts to the forced-summary path so the user gets an
+   * answer instead of a cliff. Called by the TUI on Esc.
+   */
+  abort(): void {
+    this._aborted = true;
+  }
+
   async *step(userInput: string): AsyncGenerator<LoopEvent> {
     this._turn++;
     this.scratch.reset();
+    this._aborted = false;
     let pendingUser: string | null = userInput;
     const toolSpecs = this.prefix.tools();
+    // 70% of the iter budget is the "you're getting close" threshold. We
+    // only warn once per step so the user sees a single signal, not a
+    // string of identical yellow lines stacked up.
+    const warnAt = Math.max(1, Math.floor(this.maxToolIters * 0.7));
+    let warnedForIterBudget = false;
 
     for (let iter = 0; iter < this.maxToolIters; iter++) {
+      if (this._aborted) {
+        yield {
+          turn: this._turn,
+          role: "warning",
+          content: `aborted at iter ${iter}/${this.maxToolIters} — forcing summary from what was gathered`,
+        };
+        yield* this.forceSummaryAfterIterLimit({ reason: "aborted" });
+        return;
+      }
+      if (!warnedForIterBudget && iter >= warnAt) {
+        warnedForIterBudget = true;
+        yield {
+          turn: this._turn,
+          role: "warning",
+          content: `${iter}/${this.maxToolIters} tool calls used — approaching budget. Press Esc to force a summary now.`,
+        };
+      }
       const messages = this.buildMessages(pendingUser);
 
       let assistantContent = "";
@@ -511,10 +552,12 @@ export class CacheFirstLoop {
     // user staring at a blank prompt), force one final no-tools call so
     // the model must produce a text summary from everything it has
     // already seen.
-    yield* this.forceSummaryAfterIterLimit();
+    yield* this.forceSummaryAfterIterLimit({ reason: "budget" });
   }
 
-  private async *forceSummaryAfterIterLimit(): AsyncGenerator<LoopEvent> {
+  private async *forceSummaryAfterIterLimit(
+    opts: { reason: "budget" | "aborted" } = { reason: "budget" },
+  ): AsyncGenerator<LoopEvent> {
     try {
       const messages = this.buildMessages(null);
       const resp = await this.client.chat({
@@ -525,7 +568,11 @@ export class CacheFirstLoop {
       const summary =
         resp.content?.trim() ||
         "(model returned no text; try a narrower question or raise --max-tool-iters)";
-      const annotated = `[tool-call budget (${this.maxToolIters}) reached — forcing summary from what I found]\n\n${summary}`;
+      const reasonPrefix =
+        opts.reason === "aborted"
+          ? "[aborted by user (Esc) — summarizing what I found so far]"
+          : `[tool-call budget (${this.maxToolIters}) reached — forcing summary from what I found]`;
+      const annotated = `${reasonPrefix}\n\n${summary}`;
       const summaryStats = this.stats.record(this._turn, this.model, resp.usage ?? new Usage());
       this.appendAndPersist({ role: "assistant", content: summary });
       yield {
@@ -536,11 +583,15 @@ export class CacheFirstLoop {
       };
       yield { turn: this._turn, role: "done", content: summary };
     } catch (err) {
+      const label =
+        opts.reason === "aborted"
+          ? "aborted by user"
+          : `tool-call budget (${this.maxToolIters}) reached`;
       yield {
         turn: this._turn,
         role: "error",
         content: "",
-        error: `tool-call budget (${this.maxToolIters}) reached and the fallback summary call failed: ${(err as Error).message}. Run /clear and retry with a narrower question, or pass --max-tool-iters higher.`,
+        error: `${label} and the fallback summary call failed: ${(err as Error).message}. Run /clear and retry with a narrower question, or raise --max-tool-iters.`,
       };
       yield { turn: this._turn, role: "done", content: "" };
     }

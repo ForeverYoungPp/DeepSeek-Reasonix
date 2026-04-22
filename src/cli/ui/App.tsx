@@ -1,5 +1,5 @@
 import type { WriteStream } from "node:fs";
-import { Box, Static, Text, useApp } from "ink";
+import { Box, Static, Text, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
 import type { LoopEvent } from "../../loop.js";
@@ -56,6 +56,10 @@ export function App({
   const [streaming, setStreaming] = useState<DisplayEvent | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Tracks whether the current turn has been aborted via Esc, so the
+  // Esc handler only fires once per turn (repeated presses would yield
+  // stacked warning events).
+  const abortedThisTurn = useRef(false);
   const [summary, setSummary] = useState<SessionSummary>({
     turns: 0,
     totalCostUsd: 0,
@@ -128,6 +132,19 @@ export function App({
     }
   }, [session, loop]);
 
+  // Esc during busy → forward to the loop as an abort signal. The loop
+  // finishes the tool call in flight (we can't kill subprocess stdio
+  // mid-write), then diverts to its no-tools summary path so the user
+  // gets an answer instead of a hard stop. Only listens while busy so
+  // we don't accidentally hijack Esc in other contexts.
+  useInput((_input, key) => {
+    if (!key.escape) return;
+    if (!busy) return;
+    if (abortedThisTurn.current) return;
+    abortedThisTurn.current = true;
+    loop.abort();
+  });
+
   const prefixHash = loop.prefix.fingerprint;
 
   const writeTranscript = useCallback(
@@ -181,6 +198,7 @@ export function App({
 
       setStreaming({ id: assistantId, role: "assistant", text: "", streaming: true });
       setBusy(true);
+      abortedThisTurn.current = false;
 
       const flush = () => {
         if (!contentBuf.current && !reasoningBuf.current) return;
@@ -258,6 +276,11 @@ export function App({
               ...prev,
               { id: `e-${Date.now()}`, role: "error", text: ev.error ?? ev.content },
             ]);
+          } else if (ev.role === "warning") {
+            setHistorical((prev) => [
+              ...prev,
+              { id: `w-${Date.now()}-${Math.random()}`, role: "warning", text: ev.content },
+            ]);
           }
         }
         flush();
@@ -294,10 +317,11 @@ export function App({
 
 function CommandStrip() {
   return (
-    <Box paddingX={2}>
+    <Box paddingX={2} flexDirection="column">
       <Text dimColor>
         /help · /preset {"<fast|smart|max>"} · /mcp · /compact · /sessions · /setup · /clear · /exit
       </Text>
+      <Text dimColor>Esc (while thinking) — abort & summarize what was found so far</Text>
     </Box>
   );
 }

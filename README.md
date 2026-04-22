@@ -6,20 +6,25 @@
 [![downloads](https://img.shields.io/npm/dm/reasonix.svg)](https://www.npmjs.com/package/reasonix)
 [![node](https://img.shields.io/node/v/reasonix.svg)](./package.json)
 
-**The DeepSeek-native agent framework.** TypeScript. Ink TUI. No LangChain.
-
-Reasonix is not another generic agent wrapper. Every abstraction is justified
-by a DeepSeek-specific property — dirt-cheap tokens, R1 reasoning traces,
-automatic prefix caching, JSON mode. Generic frameworks treat DeepSeek as
-"OpenAI with a different base URL" and leave these advantages on the table.
-Reasonix leans into them.
+**A DeepSeek-native AI coding assistant in your terminal.** Ink TUI. MCP
+first-class. No LangChain.
 
 ```bash
-npx reasonix chat          # first run prompts for your DeepSeek key
-                           # inside the TUI, type /help for everything else
+npx reasonix
 ```
 
-No flag soup. All feature toggles live behind slash commands in the TUI.
+One command. First run walks you through a 30-second wizard (API key →
+preset → pick MCP servers from a checklist); every run after that drops
+straight into chat with your tools wired up. Inside the chat, type `/help`.
+
+Why bother with yet another agent framework? Because every abstraction
+here earns its weight against a DeepSeek-specific property — dirt-cheap
+tokens, R1 reasoning traces, automatic prefix caching, JSON mode.
+Generic wrappers treat DeepSeek as "OpenAI with a different base URL"
+and leave these advantages on the table. Reasonix leans into them:
+on the same τ-bench-lite workload,
+[**94.4% cache hit, ~40% cheaper tokens, 100% pass rate**](#validated-numbers)
+vs. a cache-hostile baseline.
 
 ---
 
@@ -27,12 +32,15 @@ No flag soup. All feature toggles live behind slash commands in the TUI.
 
 | Feature | How it works | Opt in |
 |---|---|---|
+| **Setup wizard** | First run of `npx reasonix`: pick preset, multi-select MCP servers from a curated catalog, saved to config so the next run just launches chat | always on (first run) |
+| **MCP (stdio + SSE)** | Multi-server bridge — every MCP tool inherits Cache-First + repair + context-safety automatically. `reasonix mcp list` shows the catalog | always on |
 | **Cache-First Loop** | Immutable prefix + append-only log = prefix byte-stable across turns → DeepSeek's automatic prefix cache hits at 70–95% | always on |
-| **R1 Thought Harvesting** | Parses `reasoning_content` into typed `{ subgoals, hypotheses, uncertainties, rejectedPaths }` via a cheap V3 call | `--harvest` |
-| **Self-Consistency Branching** | Runs N parallel samples at spread temperatures; picks the one with the fewest flagged uncertainties | `--branch <N>` |
+| **Context safety net** | Tool results capped at 32k chars · oversized sessions auto-heal on load · `/compact` to shrink further · ctx gauge in the status bar · Esc to abort exploration and get a forced summary | always on |
+| **R1 Thought Harvesting** | Parses `reasoning_content` into typed `{ subgoals, hypotheses, uncertainties, rejectedPaths }` via a cheap V3 call | `/preset smart` |
+| **Self-Consistency Branching** | Runs N parallel samples at spread temperatures; picks the one with the fewest flagged uncertainties | `/preset max` / `/branch N` |
 | **Tool-Call Repair** | Auto-flattens deep/wide schemas, scavenges tool calls leaked into `<think>`, repairs truncated JSON, breaks call-storms | always on |
 | **Retry layer** | Exponential backoff + jitter on 408/429/500/502/503/504 and network errors. 4xx auth errors don't retry | always on |
-| **Ink TUI** | Live cache-hit / cost panel. Streams R1 thinking to a compact preview. Renders Markdown (bold / lists / code / stripped LaTeX) | always on |
+| **Ink TUI** | Live cache-hit / cost / context panel. Streams R1 thinking to a compact preview. Renders Markdown (bold / lists / code / stripped LaTeX) | always on |
 
 ---
 
@@ -91,10 +99,12 @@ with your own API key: `npx tsx benchmarks/tau-bench/runner.ts --repeats 3`.
 
 [r]: ./benchmarks/tau-bench/report.md
 
-### Extends to MCP (v0.3-alpha)
+### MCP — works out of the box
 
 Any [MCP](https://spec.modelcontextprotocol.io/) server's tools inherit
-the same Cache-First benefits. Two live runs, two data points:
+Cache-First + repair + context-safety automatically. The wizard (`npx
+reasonix`) lets you multi-select from a curated catalog — no flags, no
+JSON-by-hand. Three live reference runs:
 
 | server | turns | tool calls | cache hit | cost | vs Claude |
 |---|---:|---:|---:|---:|---:|
@@ -103,40 +113,21 @@ the same Cache-First benefits. Two live runs, two data points:
 | **both concurrently** (`demo_add` + `fs_write_file`) | 5 | 4 | **81.1%** | $0.001852 | −95.9% |
 
 The third row is the ecosystem proof: two MCP servers running as
-separate subprocesses, tools from both exercised in one conversation
-(compute `17+25` with the demo server, write the result to a real file
-via the filesystem server). **One single prefix hash across all 5
-turns** — byte-stability survives concurrent MCP subprocesses.
+separate subprocesses, tools from both exercised in one conversation.
+**One single prefix hash across all 5 turns** — byte-stability survives
+concurrent MCP subprocesses.
 
-**Reproduce without an API key** (replay the committed transcripts):
+Reproduce without an API key (replay the committed transcripts):
 
 ```bash
 npx reasonix replay benchmarks/tau-bench/transcripts/mcp-demo.add.jsonl
 npx reasonix replay benchmarks/tau-bench/transcripts/mcp-filesystem.jsonl
 ```
 
-**Reproduce with your own key** (live, ~$0.002):
-
-```bash
-# Don't know what MCP servers exist? Start here:
-reasonix mcp list
-# Prints a curated catalog (filesystem, fetch, github, sqlite, …) with
-# ready-to-paste --mcp commands.
-
-# One server:
-reasonix chat --mcp "filesystem=npx -y @modelcontextprotocol/server-filesystem /tmp/safe"
-
-# Multiple servers at once — each gets its own namespace prefix:
-reasonix chat \
-  --mcp "fs=npx -y @modelcontextprotocol/server-filesystem /tmp/safe" \
-  --mcp "mem=npx -y @modelcontextprotocol/server-memory"
-# Tools land in a shared registry as fs_read_file, mem_set, etc.
-
-# Remote / hosted MCP server — pass an http(s) URL instead of a command.
-# Reasonix opens an SSE stream and POSTs JSON-RPC to the endpoint the
-# server advertises (MCP 2024-11-05 HTTP+SSE transport).
-reasonix chat --mcp "kb=https://mcp.example.com/sse"
-```
+Supported transports: **stdio** (local `npx` or binary) and **HTTP+SSE**
+(remote / hosted servers, MCP 2024-11-05 spec). Pass an `http(s)://`
+URL to `--mcp` and Reasonix opens the SSE stream and POSTs JSON-RPC
+to the endpoint the server advertises.
 
 [mcp]: ./benchmarks/tau-bench/transcripts/mcp-demo.add.jsonl
 
@@ -144,55 +135,66 @@ reasonix chat --mcp "kb=https://mcp.example.com/sse"
 
 ## Usage
 
-### CLI
+### One command
 
 ```bash
-npx reasonix chat                # auto-saves to session 'default'; resumes next time
-npx reasonix chat --session work # use a different named session
-npx reasonix chat --no-session   # ephemeral — nothing persisted
-npx reasonix run "ask anything"  # one-shot, streams to stdout
-npx reasonix stats session.jsonl # quick summary of a transcript
-npx reasonix replay chat.jsonl   # pretty-print a transcript + rebuild cost/cache offline
-npx reasonix diff a.jsonl b.jsonl --md diff.md   # compare two transcripts: cache/cost delta + first divergence
+npx reasonix
 ```
 
-Sessions live as JSONL under `~/.reasonix/sessions/<name>.jsonl` — every
-turn's message log is appended atomically, so killing the CLI never loses
-context. Inside the TUI: `/sessions` to list, `/forget` to delete the
-current one.
+First run: a wizard asks for your API key, lets you pick a preset
+(fast / smart / max), then offers a multi-select checklist of MCP
+servers — filesystem, memory, github, puppeteer, everything. Everything
+is saved to `~/.reasonix/config.json`. Subsequent runs drop straight
+into chat.
 
-### Inside the chat — slash commands
+### Inside the chat
 
-A command strip runs under the input box so you don't have to memorize
-anything. Type `/help` for the full list. The biggest shortcut:
-
-```
-/preset fast     deepseek-chat, no harvest, no branch        (default)
-/preset smart    reasoner + harvest                           (~10x cost)
-/preset max      reasoner + harvest + branch 3                (~30x cost, slowest)
-```
-
-One-tap switch between fast daily driver, careful thinker, and max-quality
-self-consistency. Individual knobs are available too:
+A status bar at the top shows cache hit %, cost, Claude-equivalent, and
+the **context gauge** (`ctx 42k/131k (32%)` — yellow at 50%, red + a
+`/compact` nudge at 80%). A command strip under the input lists the
+slash commands:
 
 ```
-/status          show current model / harvest / branch / stream
-/model <id>      deepseek-chat or deepseek-reasoner
-/harvest [on|off] Pillar 2 — parse R1 reasoning into typed plan state
-/branch <N|off>  run N parallel samples per turn, pick most confident
-/clear           clear displayed history (log is kept)
-/exit            quit
+/help                   full list + hints
+/preset <fast|smart|max> one-tap bundles (model + harvest + branch)
+/mcp                    list attached MCP servers and tools
+/compact [cap]          shrink oversized tool results in history
+/sessions · /forget     list / delete saved sessions
+/setup                  reconfigure (exits and tells you to run `reasonix setup`)
+/clear · /exit
 ```
 
-The top panel shows active flags live: `· harvest · branch3` appear next to
-the model once enabled.
+**Esc while thinking** — abort the current exploration and force the
+model to summarize what it already found. No more "model ran 24 tool
+calls and gave up" — you get an answer every time.
 
-### Flags (for automation / CI)
+Sessions live as JSONL under `~/.reasonix/sessions/<name>.jsonl` —
+every message appended atomically, so killing the CLI never loses
+context. Oversized tool results auto-heal on load, so poisoning a
+session with one giant `read_file` doesn't brick your history.
 
-The same knobs are also available as CLI flags if you're scripting:
+### Advanced — CLI subcommands and flags
 
 ```bash
-npx reasonix chat -m deepseek-reasoner --harvest --branch 3 --transcript session.jsonl
+npx reasonix setup                       # reconfigure any time
+npx reasonix chat --session work         # a different named session
+npx reasonix chat --no-session           # ephemeral — nothing persisted
+npx reasonix run "ask anything"          # one-shot, streams to stdout
+npx reasonix stats session.jsonl         # summarize a transcript
+npx reasonix replay chat.jsonl           # scrub a transcript + rebuild cost/cache
+npx reasonix diff a.jsonl b.jsonl --md   # compare two transcripts
+npx reasonix mcp list                    # curated MCP server catalog
+```
+
+Power users can still bypass config and drive Reasonix with flags:
+
+```bash
+npx reasonix chat \
+  --preset max \
+  --mcp "filesystem=npx -y @modelcontextprotocol/server-filesystem /tmp/safe" \
+  --mcp "kb=https://mcp.example.com/sse" \
+  --transcript session.jsonl \
+  --no-config   # ignore ~/.reasonix/config.json (for CI / reproducing issues)
 ```
 
 ### Library
@@ -238,15 +240,18 @@ console.log(loop.stats.summary());
 
 ### Configuration
 
-On first run the CLI prompts for your DeepSeek API key and saves it to
-`~/.reasonix/config.json`. Alternatives:
+The wizard handles everything on first run. If you'd rather use env vars
+(CI, shared boxes, etc.):
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...        # env var (wins over config file)
+export DEEPSEEK_API_KEY=sk-...        # wins over ~/.reasonix/config.json
 export DEEPSEEK_BASE_URL=https://...  # optional alternate endpoint
 ```
 
 Get a key (free credit on signup): <https://platform.deepseek.com/api_keys>
+
+Re-run `npx reasonix setup` any time to add/remove MCP servers or switch
+preset — your existing selections are pre-checked.
 
 ---
 
@@ -269,7 +274,7 @@ cd reasonix
 npm install
 npm run dev chat        # run CLI from source via tsx
 npm run build           # tsup to dist/
-npm test                # vitest (89 tests)
+npm test                # vitest (279 tests)
 npm run lint            # biome
 npm run typecheck       # tsc --noEmit
 ```

@@ -3,6 +3,45 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] — 2026-04-21
+
+**Headline:** Long exploration sessions are now interruptible and
+self-announcing. 0.3.1's forced-summary was a terminal safety net;
+this release turns it into an interactive budget with a visible warning
+at 70% and `Esc` to cash out early. Plus a README rewrite so new users
+actually know the new UX exists.
+
+### Added
+
+- **Esc while thinking → force a summary now.** `CacheFirstLoop` grows
+  an `abort()` method; the TUI's `useInput` wires Esc to it during
+  busy state (guarded by a once-per-turn flag). The loop checks the
+  abort flag at each iteration boundary, lets any in-flight tool call
+  complete, then diverts to the same no-tools summary path introduced
+  in 0.3.1 — prefixed `[aborted by user (Esc) — summarizing what I
+  found so far]`.
+- **Yellow warning at 70% of tool-call budget.** New `"warning"`
+  `EventRole` + `DisplayRole`, yielded once per step when tool-iter
+  count reaches `Math.floor(maxToolIters * 0.7)`. TUI renders it
+  yellow in the event log with the "Press Esc to summarize now" hint.
+  The command strip under the prompt also advertises the Esc hotkey.
+- **README hero rewrite.** `npx reasonix` (no flags) is now the first
+  code block, with the wizard story in prose; `--mcp`/`--preset`
+  moved to an "Advanced — CLI subcommands and flags" section.
+  What-you-get table gains *Setup wizard*, *Context safety net*
+  (tool-result cap + heal-on-load + `/compact` + ctx gauge + Esc),
+  and merges the MCP transports into one row. Non-goals and
+  configuration sections trimmed to match the new flow.
+
+### Tests (+2, suite 277→279)
+
+- `tests/loop.test.ts` (+2) — warning fires exactly once at the 70%
+  threshold and the content carries `N/budget tool calls used` +
+  `Esc`. `abort()` mid-step pulls the loop into the summary path,
+  surfacing an `aborted by user` prefix on the final event.
+
+---
+
 ## [0.3.1] — 2026-04-21
 
 **Fixes a silent stop** that surfaced on the first real MCP exploration

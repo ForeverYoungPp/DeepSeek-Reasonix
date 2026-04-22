@@ -186,6 +186,85 @@ describe("CacheFirstLoop (non-streaming)", () => {
     expect(msgs2.length).toBeGreaterThan(msgs1.length);
   });
 
+  it("yields a warning event once when tool-call count crosses 70% of budget", async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "probe",
+      description: "no-op",
+      parameters: { type: "object", properties: {} },
+      fn: async () => "ok",
+    });
+    const callAgain = {
+      content: "",
+      tool_calls: [{ id: "c", type: "function", function: { name: "probe", arguments: "{}" } }],
+    };
+    const summary = { content: "all done" };
+    const responses: FakeResponseShape[] = [callAgain, callAgain, callAgain, callAgain, summary];
+    const client = makeClient(responses);
+    const loop = new CacheFirstLoop({
+      client,
+      prefix: new ImmutablePrefix({ system: "s", toolSpecs: reg.specs() }),
+      tools: reg,
+      stream: false,
+      maxToolIters: 4, // 70% → warn starting at iter >= 2
+    });
+
+    const warnings: string[] = [];
+    for await (const ev of loop.step("go")) {
+      if (ev.role === "warning") warnings.push(ev.content);
+    }
+    // Exactly one warning should fire (guard against the once-per-turn flag
+    // regressing). Content must mention the X/N count and "Esc".
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/\d+\/4 tool calls used/);
+    expect(warnings[0]).toMatch(/Esc/);
+  });
+
+  it("abort() mid-step diverts to the summary path with an 'aborted' prefix", async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "probe",
+      description: "no-op",
+      parameters: { type: "object", properties: {} },
+      fn: async () => "ok",
+    });
+    const chainingToolCall = {
+      content: "",
+      tool_calls: [{ id: "c", type: "function", function: { name: "probe", arguments: "{}" } }],
+    };
+    // Only one chaining response — after the abort fires on its tool
+    // event, the loop's next API call IS the forced-summary request, so
+    // the summary response needs to be index 1.
+    const responses: FakeResponseShape[] = [chainingToolCall, { content: "partial findings." }];
+    const client = makeClient(responses);
+    const loop = new CacheFirstLoop({
+      client,
+      prefix: new ImmutablePrefix({ system: "s", toolSpecs: reg.specs() }),
+      tools: reg,
+      stream: false,
+      maxToolIters: 16,
+    });
+
+    // Call abort AFTER the first tool event fires — simulates the user
+    // hitting Esc while the loop is exploring.
+    const events: { role: string; content?: string }[] = [];
+    let aborted = false;
+    for await (const ev of loop.step("go")) {
+      events.push({ role: ev.role, content: ev.content });
+      if (!aborted && ev.role === "tool") {
+        aborted = true;
+        loop.abort();
+      }
+    }
+
+    const warnings = events.filter((e) => e.role === "warning");
+    expect(warnings.some((w) => /aborted/.test(w.content ?? ""))).toBe(true);
+    const finals = events.filter((e) => e.role === "assistant_final");
+    const summary = finals[finals.length - 1];
+    expect(summary!.content).toMatch(/aborted by user/);
+    expect(summary!.content).toContain("partial findings.");
+  });
+
   it("forces a summary when maxToolIters is exhausted, instead of stopping silently", async () => {
     // Give a registered tool so the repair layer doesn't strip the fake
     // tool_calls for referring to an unknown name.

@@ -6,7 +6,7 @@ import type { TurnStats } from "../../telemetry.js";
 import { PlanStateBlock } from "./PlanStateBlock.js";
 import { Markdown } from "./markdown.js";
 
-export type DisplayRole = "user" | "assistant" | "tool" | "system" | "error" | "info";
+export type DisplayRole = "user" | "assistant" | "tool" | "system" | "error" | "info" | "warning";
 
 export interface DisplayEvent {
   id: string;
@@ -75,6 +75,14 @@ export const EventRow = React.memo(function EventRow({ event }: { event: Display
     return (
       <Box>
         <Text dimColor>{event.text}</Text>
+      </Box>
+    );
+  }
+  if (event.role === "warning") {
+    return (
+      <Box>
+        <Text color="yellow">▸ </Text>
+        <Text color="yellow">{event.text}</Text>
       </Box>
     );
   }
