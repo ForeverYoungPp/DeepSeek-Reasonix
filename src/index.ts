@@ -101,6 +101,11 @@ export {
 export type { BridgeOptions, BridgeResult, FlattenOptions } from "./mcp/registry.js";
 export { parseMcpSpec } from "./mcp/spec.js";
 export type { McpSpec, StdioMcpSpec, SseMcpSpec } from "./mcp/spec.js";
+
+// ---------- code mode (v0.3 — `reasonix code`) ----------
+export { parseEditBlocks, applyEditBlock, applyEditBlocks } from "./code/edit-blocks.js";
+export type { EditBlock, ApplyResult, ApplyStatus } from "./code/edit-blocks.js";
+export { CODE_SYSTEM_PROMPT } from "./code/prompt.js";
 export {
   MCP_PROTOCOL_VERSION,
   isJsonRpcError,
@@ -140,4 +145,4 @@ export type {
   JSONSchema,
 } from "./types.js";
 
-export const VERSION = "0.3.2";
+export const VERSION = "0.4.0";

@@ -1,6 +1,7 @@
 import type { WriteStream } from "node:fs";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ApplyResult, applyEditBlocks, parseEditBlocks } from "../../code/edit-blocks.js";
 import { CacheFirstLoop, DeepSeekClient, ImmutablePrefix } from "../../index.js";
 import type { LoopEvent } from "../../loop.js";
 import type { SessionSummary } from "../../telemetry.js";
@@ -26,6 +27,11 @@ export interface AppProps {
   tools?: ToolRegistry;
   /** Raw `--mcp` / config-derived spec strings, for `/mcp` slash display. */
   mcpSpecs?: string[];
+  /**
+   * When set, parse SEARCH/REPLACE blocks from assistant responses and
+   * apply them to disk under `rootDir`. Set by `reasonix code`.
+   */
+  codeMode?: { rootDir: string };
 }
 
 /**
@@ -50,6 +56,7 @@ export function App({
   session,
   tools,
   mcpSpecs,
+  codeMode,
 }: AppProps) {
   const { exit } = useApp();
   const [historical, setHistorical] = useState<DisplayEvent[]>([]);
@@ -246,12 +253,13 @@ export function App({
             flush();
             const repairNote = ev.repair ? describeRepair(ev.repair) : "";
             setStreaming(null);
+            const finalText = ev.content || streamRef.text;
             setHistorical((prev) => [
               ...prev,
               {
                 id: assistantId,
                 role: "assistant",
-                text: ev.content || streamRef.text,
+                text: finalText,
                 reasoning: streamRef.reasoning || undefined,
                 planState: ev.planState,
                 branch: ev.branch,
@@ -260,6 +268,24 @@ export function App({
                 streaming: false,
               },
             ]);
+            if (codeMode && finalText) {
+              // Parse and apply SEARCH/REPLACE edit blocks. Report as a
+              // synthetic info event so the user sees exactly what
+              // landed on disk this turn. Each result gets its own row
+              // for easy scan; failures stay visible alongside successes.
+              const blocks = parseEditBlocks(finalText);
+              if (blocks.length > 0) {
+                const results = applyEditBlocks(blocks, codeMode.rootDir);
+                setHistorical((prev) => [
+                  ...prev,
+                  {
+                    id: `edit-${Date.now()}`,
+                    role: "info",
+                    text: formatEditResults(results),
+                  },
+                ]);
+              }
+            }
           } else if (ev.role === "tool") {
             flush();
             setHistorical((prev) => [
@@ -291,7 +317,7 @@ export function App({
         setBusy(false);
       }
     },
-    [busy, exit, loop, mcpSpecs, writeTranscript],
+    [busy, codeMode, exit, loop, mcpSpecs, writeTranscript],
   );
 
   return (
@@ -324,6 +350,27 @@ function CommandStrip() {
       <Text dimColor>Esc (while thinking) — abort & summarize what was found so far</Text>
     </Box>
   );
+}
+
+/**
+ * Render a batch of SEARCH/REPLACE application results as one
+ * human-scannable info line per edit. Prefixes denote status so the
+ * line reads well even without color (e.g. when piped to a log file
+ * or stripped for screenshots):
+ *   ✓ applied  src/foo.ts
+ *   ✓ created  src/new.ts
+ *   ✗ not-found  src/bar.ts (SEARCH text does not match…)
+ */
+function formatEditResults(results: ApplyResult[]): string {
+  const lines = results.map((r) => {
+    const mark = r.status === "applied" || r.status === "created" ? "✓" : "✗";
+    const detail = r.message ? ` (${r.message})` : "";
+    return `  ${mark} ${r.status.padEnd(11)} ${r.path}${detail}`;
+  });
+  const ok = results.filter((r) => r.status === "applied" || r.status === "created").length;
+  const total = results.length;
+  const header = `▸ edit blocks: ${ok}/${total} applied — run \`git diff\` to review`;
+  return [header, ...lines].join("\n");
 }
 
 function describeRepair(repair: {

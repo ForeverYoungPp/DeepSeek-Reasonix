@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { readConfig } from "../config.js";
 import { VERSION } from "../index.js";
 import { chatCommand } from "./commands/chat.js";
+import { codeCommand } from "./commands/code.js";
 import { diffCommand } from "./commands/diff.js";
 import { mcpListCommand } from "./commands/mcp.js";
 import { replayCommand } from "./commands/replay.js";
@@ -48,6 +49,23 @@ program
   .description("Interactive wizard — API key, preset, MCP servers. Re-run any time to reconfigure.")
   .action(async () => {
     await setupCommand({});
+  });
+
+program
+  .command("code [dir]")
+  .description(
+    "Code-editing chat — filesystem MCP auto-bridged at <dir> (default: cwd), coding system prompt, smart preset. Model proposes SEARCH/REPLACE blocks; Reasonix applies them to disk.",
+  )
+  .option("-m, --model <id>", "Override default reasoner model")
+  .option("--no-session", "Disable session persistence for this run")
+  .option("--transcript <path>", "Write a JSONL transcript to this path")
+  .action(async (dir: string | undefined, opts) => {
+    await codeCommand({
+      dir,
+      model: opts.model,
+      noSession: opts.session === false,
+      transcript: opts.transcript,
+    });
   });
 
 program

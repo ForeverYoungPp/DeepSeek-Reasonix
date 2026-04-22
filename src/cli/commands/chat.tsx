@@ -22,6 +22,11 @@ export interface ChatOptions {
   mcp?: string[];
   /** Global prefix — only used when a single anonymous server is given. */
   mcpPrefix?: string;
+  /**
+   * Enable SEARCH/REPLACE edit-block processing after each assistant turn.
+   * Set by `reasonix code`; plain `reasonix chat` leaves this off.
+   */
+  codeMode?: { rootDir: string };
 }
 
 interface RootProps extends ChatOptions {
@@ -53,6 +58,7 @@ function Root({ initialKey, tools, mcpSpecs, ...appProps }: RootProps) {
       session={appProps.session}
       tools={tools}
       mcpSpecs={mcpSpecs}
+      codeMode={appProps.codeMode}
     />
   );
 }

@@ -3,6 +3,76 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-04-21
+
+**Headline:** `reasonix code` — a new subcommand that turns Reasonix
+into a coding assistant. Auto-bridges the filesystem MCP at your
+working directory, teaches the model to emit Aider-style
+SEARCH/REPLACE blocks, applies them to disk after each turn. The
+"cheap Claude Code" pitch becomes real.
+
+### Added
+
+- **`npx reasonix code [dir]`** — opinionated wrapper around chat:
+  - Filesystem MCP auto-bridged at `[dir]` (default CWD). No wizard,
+    no config merge. Out-of-box ready.
+  - Code-specialized system prompt that teaches SEARCH/REPLACE.
+  - Reasoner + harvest on by default (coding tasks repay R1 thinking).
+  - Per-directory session name (`code-<basename>`) so different
+    projects don't share history.
+- **SEARCH/REPLACE edit blocks** (`src/code/edit-blocks.ts`). The
+  model emits:
+    ```
+    path/to/file.ts
+    <<<<<<< SEARCH
+    (exact existing lines)
+    =======
+    (replacement)
+    >>>>>>> REPLACE
+    ```
+  Reasonix parses them from `assistant_final`, applies them under
+  the root dir, reports each result (`✓ applied`, `✓ created`,
+  `✗ not-found`, `✗ path-escape`, …) as an info line in the TUI.
+  Empty SEARCH creates a new file (Aider convention). SEARCH must
+  match byte-for-byte; we never fuzzy-match, because a silently wrong
+  edit is worse than a loud rejection.
+- **New public API** on the library: `parseEditBlocks`,
+  `applyEditBlock`, `applyEditBlocks`, `CODE_SYSTEM_PROMPT`, and the
+  types `EditBlock` / `ApplyResult` / `ApplyStatus`. Anyone building
+  their own code-assistant UX can compose from these.
+- **`ChatOptions.codeMode`** — opt-in flag to enable edit-block
+  processing inside the existing TUI event loop. Plain `reasonix chat`
+  leaves it off.
+
+### Why 0.4.0 (minor, not patch)
+
+This is a new user-facing primitive, not a bug fix or UX polish. The
+library exports grow; the `ChatOptions` interface gains a field.
+Nothing breaks for existing 0.3.x users — `reasonix chat` behaves
+exactly as before when `codeMode` is absent. But the SemVer convention
+is: additive new surface = minor bump.
+
+### Tests (+13, suite 279→292)
+
+- `tests/edit-blocks.test.ts` (+13 new file). `parseEditBlocks`
+  round-trips single + multi + multi-line + empty-SEARCH blocks, and
+  ignores stray 7-char runs in arbitrary prose. `applyEditBlock`
+  covers happy path, new-file creation, not-found rejection,
+  file-missing, path-escape defense, first-occurrence semantics.
+  Batch `applyEditBlocks` confirms failures don't cascade.
+
+### Notes
+
+- v1 scope is deliberately narrow: no `/commit`, no `/undo`, no
+  .gitignore filtering, no diff preview. The user's own `git diff` +
+  `git checkout` is the review + undo surface — and we run inside a
+  git repo by convention.
+- The ctx gauge + Esc + /compact safety net from 0.3.1/0.3.2 applies
+  equally to code mode. Exploring a large repo now has visible
+  progress and a hard off-switch.
+
+---
+
 ## [0.3.2] — 2026-04-21
 
 **Headline:** Long exploration sessions are now interruptible and

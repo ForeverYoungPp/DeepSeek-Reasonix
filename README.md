@@ -173,6 +173,38 @@ every message appended atomically, so killing the CLI never loses
 context. Oversized tool results auto-heal on load, so poisoning a
 session with one giant `read_file` doesn't brick your history.
 
+### Code mode — `npx reasonix code`
+
+A thin opinionated layer on top of chat: filesystem MCP bridged at
+`cwd`, coding system prompt, reasoner preset, per-directory session.
+The model proposes edits as **SEARCH/REPLACE blocks**:
+
+```
+src/foo.ts
+<<<<<<< SEARCH
+const x = 1;
+=======
+const x = 2;
+>>>>>>> REPLACE
+```
+
+Reasonix parses them out of each turn, applies them to disk, reports
+`✓ applied src/foo.ts` in the TUI. SEARCH must match byte-for-byte;
+we never fuzzy-match (silent wrong edits are worse than loud
+rejections). Run `git diff` to review, `git checkout .` to undo.
+
+```bash
+cd my-project
+npx reasonix code           # default: cwd, reasoner, per-dir session
+npx reasonix code src/      # scope the filesystem sandbox tighter
+npx reasonix code --no-session   # ephemeral
+```
+
+First-run sandbox: because code mode uses the filesystem MCP from
+`@modelcontextprotocol/server-filesystem`, the model can only read
+and write inside the directory you pointed at. It literally can't
+touch files above that root.
+
 ### Advanced — CLI subcommands and flags
 
 ```bash
