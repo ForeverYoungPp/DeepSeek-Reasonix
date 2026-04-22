@@ -17,6 +17,25 @@ export interface ToolDefinition<A = any, R = any> {
   name: string;
   description?: string;
   parameters?: JSONSchema;
+  /**
+   * Marks a tool as read-only: safe to invoke during plan mode. `true`
+   * for tools that only observe (read_file, list_directory, search, web
+   * fetch/search). Leave undefined / `false` for anything that can write,
+   * execute, or mutate state.
+   *
+   * The registry enforces this at dispatch: non-readonly tools called
+   * while `planMode` is on return a refusal string the model can
+   * learn from, instead of actually running.
+   */
+  readOnly?: boolean;
+  /**
+   * Dynamic read-only check for tools whose safety depends on arguments
+   * — `run_command` with an allowlisted argv is safe, `run_command
+   * rm -rf` isn't. Called with the parsed arguments; `true` means "treat
+   * as read-only for plan mode". Takes precedence over `readOnly` when
+   * both are set.
+   */
+  readOnlyCheck?: (args: A) => boolean;
   fn: (args: A, ctx?: ToolCallContext) => R | Promise<R>;
 }
 
@@ -42,9 +61,27 @@ export interface ToolRegistryOptions {
 export class ToolRegistry {
   private readonly _tools = new Map<string, InternalTool>();
   private readonly _autoFlatten: boolean;
+  /**
+   * When true, `dispatch` refuses any tool whose `readOnly` flag isn't
+   * set (and whose `readOnlyCheck` doesn't pass on the specific args).
+   * Drives `reasonix code`'s Plan Mode — the model can still explore
+   * via read tools but its writes and non-allowlisted shell calls are
+   * bounced until the user approves a submitted plan.
+   */
+  private _planMode = false;
 
   constructor(opts: ToolRegistryOptions = {}) {
     this._autoFlatten = opts.autoFlatten !== false;
+  }
+
+  /** Enable / disable plan-mode enforcement at dispatch. */
+  setPlanMode(on: boolean): void {
+    this._planMode = Boolean(on);
+  }
+
+  /** True when the registry is currently refusing non-readonly calls. */
+  get planMode(): boolean {
+    return this._planMode;
   }
 
   register<A, R>(def: ToolDefinition<A, R>): this {
@@ -120,15 +157,48 @@ export class ToolRegistry {
       args = nestArguments(args);
     }
 
+    // Plan-mode enforcement — runs AFTER arg parsing so a tool with a
+    // runtime `readOnlyCheck` can inspect the actual args (e.g.
+    // `run_command` is read-only iff the command matches its allowlist).
+    if (this._planMode && !isReadOnlyCall(tool, args)) {
+      return JSON.stringify({
+        error: `${name}: unavailable in plan mode — this is a read-only exploration phase. Use read_file / list_directory / search_files / directory_tree / web_search / allowlisted shell commands to investigate. Call submit_plan with your proposed plan when you're ready for the user's review.`,
+      });
+    }
+
     try {
       const result = await tool.fn(args, { signal: opts.signal });
       return typeof result === "string" ? result : JSON.stringify(result);
     } catch (err) {
+      const e = err as Error & { toToolResult?: () => unknown };
+      // Errors may opt into a richer tool-result shape by implementing
+      // `toToolResult()`. Used by `PlanProposedError` to smuggle the
+      // submitted plan text out to the UI without stuffing it into the
+      // error message (which the dispatcher truncates at no fixed limit,
+      // but keeping payloads structured is cleaner for UI parsing).
+      if (typeof e.toToolResult === "function") {
+        try {
+          return JSON.stringify(e.toToolResult());
+        } catch {
+          /* fall through to the default shape */
+        }
+      }
       return JSON.stringify({
-        error: `${(err as Error).name}: ${(err as Error).message}`,
+        error: `${e.name}: ${e.message}`,
       });
     }
   }
+}
+
+function isReadOnlyCall(tool: InternalTool, args: Record<string, unknown>): boolean {
+  if (tool.readOnlyCheck) {
+    try {
+      return Boolean(tool.readOnlyCheck(args as never));
+    } catch {
+      return false;
+    }
+  }
+  return tool.readOnly === true;
 }
 
 function hasDotKey(obj: Record<string, unknown>): boolean {

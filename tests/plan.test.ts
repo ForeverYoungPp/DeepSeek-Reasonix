@@ -1,0 +1,195 @@
+/**
+ * Plan Mode — the dispatch-level enforcement (ToolRegistry read-only
+ * gate) and the submit_plan tool (PlanProposedError + toToolResult
+ * protocol).
+ */
+
+import { describe, expect, it } from "vitest";
+import { ToolRegistry } from "../src/tools.js";
+import { PlanProposedError, registerPlanTool } from "../src/tools/plan.js";
+
+describe("ToolRegistry plan mode", () => {
+  it("starts with plan mode off by default", () => {
+    const reg = new ToolRegistry();
+    expect(reg.planMode).toBe(false);
+  });
+
+  it("setPlanMode toggles the flag", () => {
+    const reg = new ToolRegistry();
+    reg.setPlanMode(true);
+    expect(reg.planMode).toBe(true);
+    reg.setPlanMode(false);
+    expect(reg.planMode).toBe(false);
+  });
+
+  it("blocks non-readOnly tools when plan mode is on", async () => {
+    const reg = new ToolRegistry();
+    let ran = false;
+    reg.register({
+      name: "mutate",
+      // readOnly: undefined → treated as write
+      fn: () => {
+        ran = true;
+        return "ok";
+      },
+    });
+    reg.setPlanMode(true);
+    const out = await reg.dispatch("mutate", "{}");
+    expect(ran).toBe(false);
+    const payload = JSON.parse(out);
+    expect(payload.error).toMatch(/unavailable in plan mode/);
+    expect(payload.error).toMatch(/submit_plan/);
+  });
+
+  it("allows readOnly tools when plan mode is on", async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "read_thing",
+      readOnly: true,
+      fn: () => "the-thing",
+    });
+    reg.setPlanMode(true);
+    const out = await reg.dispatch("read_thing", "{}");
+    expect(out).toBe("the-thing");
+  });
+
+  it("honors readOnlyCheck taking the actual arguments into account", async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "maybe_read",
+      readOnlyCheck: (args: { kind?: string }) => args.kind === "read",
+      fn: (args: { kind?: string }) => `did-${args.kind}`,
+    });
+    reg.setPlanMode(true);
+    // Read call: allowed.
+    const readOut = await reg.dispatch("maybe_read", '{"kind":"read"}');
+    expect(readOut).toBe("did-read");
+    // Write call: refused.
+    const writeOut = await reg.dispatch("maybe_read", '{"kind":"write"}');
+    expect(JSON.parse(writeOut).error).toMatch(/unavailable in plan mode/);
+  });
+
+  it("readOnlyCheck takes precedence over readOnly when both are set", async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "mixed",
+      readOnly: false,
+      readOnlyCheck: () => true,
+      fn: () => "ran",
+    });
+    reg.setPlanMode(true);
+    const out = await reg.dispatch("mixed", "{}");
+    expect(out).toBe("ran");
+  });
+
+  it("with plan mode off, readOnly flags don't interfere", async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "normal",
+      fn: () => "ran",
+    });
+    expect(reg.planMode).toBe(false);
+    const out = await reg.dispatch("normal", "{}");
+    expect(out).toBe("ran");
+  });
+
+  it("serializes errors via toToolResult when the thrown error implements it", async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "structured_err",
+      fn: () => {
+        const err = new Error("oops") as Error & { toToolResult?: () => unknown };
+        err.name = "StructuredError";
+        err.toToolResult = () => ({ error: "StructuredError: oops", extra: "pinned-out-of-band" });
+        throw err;
+      },
+    });
+    const out = await reg.dispatch("structured_err", "{}");
+    const parsed = JSON.parse(out);
+    expect(parsed.error).toBe("StructuredError: oops");
+    expect(parsed.extra).toBe("pinned-out-of-band");
+  });
+
+  it("falls back to the default error shape when toToolResult throws", async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "broken_serializer",
+      fn: () => {
+        const err = new Error("base-message") as Error & { toToolResult?: () => unknown };
+        err.name = "Broken";
+        err.toToolResult = () => {
+          throw new Error("serialization failed");
+        };
+        throw err;
+      },
+    });
+    const out = await reg.dispatch("broken_serializer", "{}");
+    expect(JSON.parse(out).error).toBe("Broken: base-message");
+  });
+});
+
+describe("PlanProposedError", () => {
+  it("carries the plan on the instance and in toToolResult()", () => {
+    const err = new PlanProposedError("# Plan\n- step 1\n- step 2");
+    expect(err.name).toBe("PlanProposedError");
+    expect(err.plan).toBe("# Plan\n- step 1\n- step 2");
+    const payload = err.toToolResult();
+    expect(payload.plan).toBe("# Plan\n- step 1\n- step 2");
+    expect(payload.error).toMatch(/^PlanProposedError:/);
+    // Message tells the model to STOP so it doesn't keep calling tools.
+    expect(payload.error).toMatch(/STOP/);
+  });
+});
+
+describe("registerPlanTool + submit_plan", () => {
+  it("registers submit_plan as readOnly so it passes the plan-mode gate", () => {
+    const reg = new ToolRegistry();
+    registerPlanTool(reg);
+    expect(reg.has("submit_plan")).toBe(true);
+    expect(reg.get("submit_plan")?.readOnly).toBe(true);
+  });
+
+  it("throws PlanProposedError when called with a plan (plan mode ON)", async () => {
+    const reg = new ToolRegistry();
+    const submitted: string[] = [];
+    registerPlanTool(reg, { onPlanSubmitted: (p) => submitted.push(p) });
+    reg.setPlanMode(true);
+    const out = await reg.dispatch("submit_plan", JSON.stringify({ plan: "# Plan\n- A" }));
+    const parsed = JSON.parse(out);
+    expect(parsed.plan).toBe("# Plan\n- A");
+    expect(parsed.error).toMatch(/PlanProposedError/);
+    expect(submitted).toEqual(["# Plan\n- A"]);
+  });
+
+  it("also fires the picker when plan mode is OFF — autonomous proposals", async () => {
+    const reg = new ToolRegistry();
+    const submitted: string[] = [];
+    registerPlanTool(reg, { onPlanSubmitted: (p) => submitted.push(p) });
+    // Plan mode intentionally NOT enabled.
+    const out = await reg.dispatch("submit_plan", JSON.stringify({ plan: "big refactor plan" }));
+    const parsed = JSON.parse(out);
+    expect(parsed.plan).toBe("big refactor plan");
+    expect(parsed.error).toMatch(/PlanProposedError/);
+    expect(submitted).toEqual(["big refactor plan"]);
+  });
+
+  it("rejects an empty plan with a helpful message", async () => {
+    const reg = new ToolRegistry();
+    registerPlanTool(reg);
+    reg.setPlanMode(true);
+    const out = await reg.dispatch("submit_plan", JSON.stringify({ plan: "   \n\n  " }));
+    const parsed = JSON.parse(out);
+    expect(parsed.error).toMatch(/empty plan/);
+    // Empty-plan is a regular Error, not PlanProposedError — so there's
+    // no `plan` field.
+    expect(parsed.plan).toBeUndefined();
+  });
+
+  it("trims surrounding whitespace from the plan", async () => {
+    const reg = new ToolRegistry();
+    registerPlanTool(reg);
+    reg.setPlanMode(true);
+    const out = await reg.dispatch("submit_plan", JSON.stringify({ plan: "\n\n  trimmed  \n" }));
+    expect(JSON.parse(out).plan).toBe("trimmed");
+  });
+});

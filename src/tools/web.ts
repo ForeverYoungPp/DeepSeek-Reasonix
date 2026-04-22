@@ -244,6 +244,7 @@ export function registerWebTools(registry: ToolRegistry, opts: WebToolsOptions =
     name: "web_search",
     description:
       "Search the public web. Returns ranked results with title, url, and snippet. Use this when the question needs information more current than your training data, when you're unsure of a factual detail, or when the user asks about a specific webpage/library/release you haven't seen.",
+    readOnly: true,
     parameters: {
       type: "object",
       properties: {
@@ -268,6 +269,7 @@ export function registerWebTools(registry: ToolRegistry, opts: WebToolsOptions =
     name: "web_fetch",
     description:
       "Download a URL and return its visible text content (HTML pages get scripts/styles/nav stripped). Truncated at the tool-result cap. Use after web_search when a snippet isn't enough.",
+    readOnly: true,
     parameters: {
       type: "object",
       properties: {

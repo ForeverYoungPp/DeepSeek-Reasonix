@@ -3,6 +3,113 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.18] — 2026-04-22
+
+**Headline:** Plan Mode — the model can propose a markdown plan
+autonomously for large tasks (multi-file refactors, architecture
+changes, ambiguous requests), and you can also force a read-only
+exploration phase via `/plan`. Picker shows Approve / Refine / Cancel.
+Approve pushes a synthetic "implement now" message; Refine keeps the
+model exploring; Cancel drops the plan. Designed around Pillar 1 —
+tool specs stay pinned, so the cache prefix doesn't break when plan
+mode toggles.
+
+### Added
+
+- **`submit_plan` tool** (`src/tools/plan.ts`) — registered by default
+  in `reasonix code`. Throws `PlanProposedError` carrying the plan
+  text via the new `toToolResult()` protocol on ToolRegistry. Fires
+  the picker whether or not plan mode is active — the model is
+  expected to propose plans on its own for large tasks; `/plan` is
+  the *stronger* constraint that forces the model into read-only.
+- **`/plan` slash** (code mode only) — toggles read-only plan mode.
+  `/plan on`, `/plan off`, or `/plan` to flip. While on, the registry
+  refuses non-read-only dispatch; while off, the model can still
+  propose plans autonomously via submit_plan. `/status` surfaces the
+  state; `StatsPanel` shows a red `PLAN` tag.
+- **`/apply-plan` slash** (code mode only) — force-approve fallback.
+  Clears plan mode, clears the pending-plan picker state, and
+  resubmits the implement-now synthetic via the existing `resubmit`
+  mechanism. Useful when the model wrote the plan in assistant text
+  instead of calling submit_plan, or when you want to keyboard-only
+  the approval without the picker.
+- **`ToolDefinition.readOnly` + `readOnlyCheck`** — declarative gate
+  used by `ToolRegistry.dispatch` when plan mode is on. Read tools
+  (`read_file`, `list_directory`, `search_files`, `directory_tree`,
+  `get_file_info`, `web_search`, `web_fetch`) run normally. Write
+  tools bounce with a refusal the model reads and learns from.
+  `run_command` uses a dynamic `readOnlyCheck` so allowlisted
+  invocations (`git status`, `cargo check`, `npm test`, `grep`, …)
+  still work during planning — exploration isn't gated. Non-allowlisted
+  commands refuse just like other writes.
+- **`ToolRegistry.setPlanMode(on)` / `.planMode`** — the enforcement
+  switch + accessor. Mirrored onto the UI's `planMode` React state so
+  the StatsPanel badge stays in sync.
+- **`toToolResult()` extension protocol** on Error subclasses —
+  `ToolRegistry.dispatch` calls it if present when an error is thrown,
+  serializing custom fields alongside `error`. Used by
+  `PlanProposedError` to ferry the plan text to the UI without
+  regex-scraping the error message. Falls back safely on serialization
+  failure.
+- **`PlanConfirm.tsx`** — 3-option Ink picker (Approve / Refine /
+  Cancel) with the plan rendered as **live Markdown** (via the
+  existing `Markdown` component — headings, lists, code, bold all
+  formatted, not raw text) in a cyan-bordered panel above. 2 400-char
+  rendered cap; longer plans get a "use /tool for full" truncation
+  marker. Live rows hidden while the picker is up, matching
+  `ShellConfirm`'s behavior. When the plan contains headings like
+  "Open questions", "Risks", "Assumptions", "待确认", "开放问题", "风险",
+  "未知", "假设", "不确定", the picker auto-selects the Refine option
+  by default and shows a yellow "▲ the plan has open questions —
+  pick Refine to answer them" hint above the options.
+- **`PlanRefineInput.tsx`** — inline text input that appears after
+  the user picks either **Approve** or **Refine**. Picking Approve
+  lets the user type last-minute instructions or answers to the
+  model's open questions (blank Enter = approve as-is). Picking
+  Refine requires specifics — the input collects them and includes
+  them verbatim in the synthetic sent to the model, so "refine"
+  actually means "revise with this feedback" instead of the generic
+  "try again" message the first cut sent. Esc returns to the picker
+  without resuming the loop.
+- **System-prompt guidance** (`CODE_SYSTEM_PROMPT`) — teaches the
+  model when to call submit_plan autonomously (big / risky / ambiguous
+  tasks) vs. just making the change (typos, obvious one-line fixes),
+  and how `/plan` mode adds the stronger dispatch gate on top.
+
+### Tests (+24, suite 542→566)
+
+- `tests/plan.test.ts` (+17) — ToolRegistry plan-mode gate
+  (default-off, toggle, block non-read-only, allow read-only, honor
+  `readOnlyCheck` per-args, precedence over `readOnly`, off-mode
+  noop); `toToolResult` protocol (serializes custom fields, falls
+  back on serializer failure); `PlanProposedError` carries plan +
+  STOP directive; `registerPlanTool` registers submit_plan as
+  read-only, fires picker both in and out of plan mode, rejects
+  empty plans, trims whitespace.
+- `tests/slash.test.ts` (+7) — `/plan` registry entries + required
+  commands check; `/plan` toggle / on / off / true / false / 0 / 1;
+  `/plan` info text explicit about the stronger-constraint
+  relationship; `/apply-plan` code-mode gating; `/apply-plan` flips
+  mode + clears pending + resubmits; works without optional
+  `clearPendingPlan` callback; `/status` plan-mode line appears
+  iff on.
+
+### Internals
+
+- `src/tools/filesystem.ts` — read_file / list_directory /
+  directory_tree / search_files / get_file_info tagged readOnly.
+- `src/tools/shell.ts` — run_command gets `readOnlyCheck` tied to
+  the existing `isAllowed` check + `allowAll` escape hatch.
+- `src/tools/web.ts` — web_search / web_fetch tagged readOnly.
+- `src/cli/commands/code.tsx` — `registerPlanTool(tools)` added after
+  the filesystem and shell registrations so the tool is always in
+  the pinned spec list (prefix cache stays stable across
+  plan-mode toggles).
+- `src/index.ts` — re-exports `PlanProposedError`, `registerPlanTool`,
+  `PlanToolOptions` for library consumers.
+
+---
+
 ## [0.4.17] — 2026-04-22
 
 **Headline:** Project memory — drop a `REASONIX.md` in your project

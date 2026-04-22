@@ -87,6 +87,27 @@ export interface SlashContext {
    * replies "root unknown" instead of silently reading a different dir.
    */
   memoryRoot?: string;
+  /**
+   * Current plan-mode state, surfaced in `/status` and toggled by
+   * `/plan`. Present iff the session is a `reasonix code` run — chat
+   * mode doesn't have plan mode.
+   */
+  planMode?: boolean;
+  /**
+   * Callback the `/plan` slash uses to flip plan mode on/off. Also
+   * mirrors the state to the underlying ToolRegistry so dispatch
+   * enforcement follows. Absent → `/plan` replies "only available in
+   * code mode".
+   */
+  setPlanMode?: (on: boolean) => void;
+  /**
+   * Callback that clears a pending-plan picker state. Called by
+   * `/apply-plan` so that when the user force-approves, the picker
+   * dismisses without also firing its own approval synthetic (the
+   * slash returns its own `resubmit` instead). Safe to call with no
+   * pending plan.
+   */
+  clearPendingPlan?: () => void;
 }
 
 export interface McpServerSummary {
@@ -149,6 +170,17 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     cmd: "commit",
     argsHint: '"msg"',
     summary: "git add -A && git commit -m ...",
+    contextual: "code",
+  },
+  {
+    cmd: "plan",
+    argsHint: "[on|off]",
+    summary: "toggle read-only plan mode (writes bounced until submit_plan + approval)",
+    contextual: "code",
+  },
+  {
+    cmd: "apply-plan",
+    summary: "force-approve a pending / in-text plan (fallback if picker was missed)",
     contextual: "code",
   },
 ];
@@ -225,6 +257,8 @@ export function handleSlash(
           "  /discard                 (code mode) drop pending edits without writing",
           "  /undo                    (code mode) roll back the last applied edit batch",
           '  /commit "msg"            (code mode) git add -A && git commit -m "msg"',
+          "  /plan [on|off]           (code mode) toggle read-only plan mode; writes gated behind submit_plan + your approval",
+          "  /apply-plan              (code mode) force-approve pending/in-text plan (fallback)",
           "  /sessions                list saved sessions (current is marked with ▸)",
           "  /forget                  delete the current session from disk",
           "  /new                     start fresh: drop all context + clear scrollback",
@@ -431,6 +465,45 @@ export function handleSlash(
       return { info: ctx.codeDiscard() };
     }
 
+    case "plan": {
+      if (!ctx.setPlanMode) {
+        return {
+          info: "/plan is only available inside `reasonix code` — chat mode doesn't gate tool writes.",
+        };
+      }
+      const currentOn = Boolean(ctx.planMode);
+      const raw = (args[0] ?? "").toLowerCase();
+      let target: boolean;
+      if (raw === "on" || raw === "true" || raw === "1") target = true;
+      else if (raw === "off" || raw === "false" || raw === "0") target = false;
+      else target = !currentOn;
+      ctx.setPlanMode(target);
+      if (target) {
+        return {
+          info: "▸ plan mode ON — write tools are gated; the model MUST call `submit_plan` before anything executes. (The model can also call submit_plan on its own for big tasks even when plan mode is off — this toggle is the stronger, explicit constraint.) Type /plan off to leave.",
+        };
+      }
+      return {
+        info: "▸ plan mode OFF — write tools are live again. Model can still propose plans autonomously for large tasks.",
+      };
+    }
+
+    case "apply-plan":
+    case "applyplan": {
+      if (!ctx.setPlanMode) {
+        return {
+          info: "/apply-plan is only available inside `reasonix code`.",
+        };
+      }
+      ctx.setPlanMode(false);
+      ctx.clearPendingPlan?.();
+      return {
+        info: "▸ plan approved — implementing",
+        resubmit:
+          "The plan above has been approved. Implement it now. You are out of plan mode — use edit_file / write_file / run_command as needed. Stick to the plan unless you discover a concrete reason to deviate; if you do, tell me and wait for a response before making that deviation.",
+      };
+    }
+
     case "commit": {
       if (!ctx.codeRoot) {
         return {
@@ -522,6 +595,7 @@ export function handleSlash(
       const mcpLine = `  mcp     ${mcpCount} server(s), ${toolCount} tool(s) in registry`;
       const pendingLine =
         pending > 0 ? `  edits   ${pending} pending (/apply to commit, /discard to drop)` : "";
+      const planLine = ctx.planMode ? "  plan    ON — writes gated (submit_plan + approval)" : "";
       const lines = [
         `  model   ${loop.model}`,
         `  flags   harvest=${loop.harvestEnabled ? "on" : "off"} · branch=${branchBudget > 1 ? branchBudget : "off"} · stream=${loop.stream ? "on" : "off"}`,
@@ -530,6 +604,7 @@ export function handleSlash(
         sessionLine,
       ];
       if (pendingLine) lines.push(pendingLine);
+      if (planLine) lines.push(planLine);
       return { info: lines.join("\n") };
     }
 

@@ -144,10 +144,52 @@ worse than visible rejections.
 - `/think` — see the model's full R1 reasoning for the last turn
   (reasoner preset only).
 - `/memory` — show the project's `REASONIX.md` (see below).
+- `/plan` — toggle read-only plan mode (see below).
 - `/undo` — roll back the last applied edit batch.
 - `/new` — start fresh in the same directory without losing the
   session file.
 - Drop `--no-session` for an ephemeral session that doesn't persist.
+
+### Plan mode — review before executing
+
+For anything bigger than a typo, the model is encouraged to propose a
+markdown plan first. You'll see a picker with **Approve / Refine /
+Cancel**:
+
+```
+reasonix code › 把 auth 从 JWT 迁移到 session cookies
+
+▸ plan submitted — awaiting your review
+────────────────────────────────────────
+## Summary
+Swap JWT middleware for session cookies, keep user table intact.
+
+## Files
+- src/auth/middleware.ts — replace `verifyJwt` with `readSession`
+- src/auth/session.ts — new file, in-memory store + signed cookie
+- src/routes/login.ts — return Set-Cookie instead of a token
+- tests/auth/*.test.ts — update fixtures
+
+## Risks
+- Existing logged-in users get logged out (no migration).
+- Session store is in-memory; restart clears sessions.
+────────────────────────────────────────
+  ▸ Approve and implement
+    Refine — explore more
+    Cancel
+```
+
+**Approve** exits plan mode and the model starts executing.
+**Refine** keeps the model exploring and asking for an updated plan.
+**Cancel** drops it and asks you what you actually want.
+
+Small fixes skip this — the model goes straight to `edit_file`.
+
+**Force it** with `/plan` — enters an explicit read-only phase where
+the model *must* submit a plan before any edit or non-allowlisted
+shell call will execute. Use it for high-stakes changes where you
+want to audit the plan before the model touches disk. `/plan off` or
+picker Approve/Cancel exits.
 
 ### Project memory — `REASONIX.md`
 

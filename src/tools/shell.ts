@@ -274,6 +274,16 @@ export function registerShellTools(registry: ToolRegistry, opts: ShellToolsOptio
     name: "run_command",
     description:
       "Run a shell command in the project root and return its combined stdout+stderr. Read-only and test commands (git status, ls, npm test, pytest, cargo test, grep, etc.) run immediately. Anything that could mutate state (npm install, git commit, rm, chmod) is refused and the user has to confirm in the TUI. Prefer this over asking the user to run a command manually — after edits, run the project's tests to verify.",
+    // Plan-mode gate: allow allowlisted commands through (git status,
+    // cargo check, ls, grep …) so the model can actually investigate
+    // during planning. Anything that would otherwise trigger a
+    // confirmation prompt is treated as "not read-only" and bounced.
+    readOnlyCheck: (args: { command?: unknown }) => {
+      if (allowAll) return true;
+      const cmd = typeof args?.command === "string" ? args.command.trim() : "";
+      if (!cmd) return false;
+      return isAllowed(cmd, extraAllowed);
+    },
     parameters: {
       type: "object",
       properties: {

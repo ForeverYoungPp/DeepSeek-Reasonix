@@ -23,6 +23,7 @@ import { loadProjectShellAllowed } from "../../config.js";
 import { sanitizeName } from "../../session.js";
 import { ToolRegistry } from "../../tools.js";
 import { registerFilesystemTools } from "../../tools/filesystem.js";
+import { registerPlanTool } from "../../tools/plan.js";
 import { registerShellTools } from "../../tools/shell.js";
 import { chatCommand } from "./chat.js";
 
@@ -61,6 +62,11 @@ export async function codeCommand(opts: CodeOptions = {}): Promise<void> {
     // choices; merged on top of the built-in allowlist in shell.ts.
     extraAllowed: loadProjectShellAllowed(rootDir),
   });
+  // `submit_plan` is always in the spec list so the prefix cache stays
+  // stable across plan-mode toggles (Pillar 1). The tool itself is a
+  // no-op outside plan mode and throws `PlanProposedError` when the
+  // user has `/plan`-enabled the session.
+  registerPlanTool(tools);
 
   process.stderr.write(
     `▸ reasonix code: rooted at ${rootDir}, session "${session ?? "(ephemeral)"}" · ${tools.size} native tool(s)\n`,

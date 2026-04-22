@@ -473,6 +473,8 @@ describe("handleSlash", () => {
       "discard",
       "undo",
       "commit",
+      "plan",
+      "apply-plan",
     ]) {
       expect(names, `registry missing /${required}`).toContain(required);
     }
@@ -630,6 +632,100 @@ describe("handleSlash", () => {
     it("refuses to guess a root when memoryRoot is absent", () => {
       const r = handleSlash("memory", [], makeLoop());
       expect(r.info).toMatch(/no project root/);
+    });
+  });
+
+  describe("/plan + /apply-plan", () => {
+    it("/plan replies 'only in code mode' when setPlanMode callback is missing", () => {
+      const r = handleSlash("plan", [], makeLoop());
+      expect(r.info).toMatch(/only available inside `reasonix code`/);
+    });
+
+    it("/plan toggles when called with no args", () => {
+      const calls: boolean[] = [];
+      const r1 = handleSlash("plan", [], makeLoop(), {
+        planMode: false,
+        setPlanMode: (on) => calls.push(on),
+      });
+      expect(calls).toEqual([true]);
+      expect(r1.info).toMatch(/plan mode ON/);
+
+      const r2 = handleSlash("plan", [], makeLoop(), {
+        planMode: true,
+        setPlanMode: (on) => calls.push(on),
+      });
+      expect(calls).toEqual([true, false]);
+      expect(r2.info).toMatch(/plan mode OFF/);
+    });
+
+    it("/plan on / off / true / false / 0 / 1 parse correctly", () => {
+      const check = (arg: string, expected: boolean) => {
+        const calls: boolean[] = [];
+        handleSlash("plan", [arg], makeLoop(), {
+          planMode: !expected, // start from the opposite
+          setPlanMode: (on) => calls.push(on),
+        });
+        expect(calls, `arg=${arg}`).toEqual([expected]);
+      };
+      check("on", true);
+      check("true", true);
+      check("1", true);
+      check("off", false);
+      check("false", false);
+      check("0", false);
+    });
+
+    it("/plan explains the stronger-constraint relationship with autonomous submit_plan", () => {
+      const r = handleSlash("plan", ["on"], makeLoop(), {
+        setPlanMode: () => {},
+        planMode: false,
+      });
+      // The info text should be explicit that submit_plan can also fire
+      // outside plan mode (autonomous) — plan mode is the *stronger*
+      // constraint, not the only path.
+      expect(r.info).toMatch(/stronger/);
+      expect(r.info).toMatch(/submit_plan/);
+    });
+
+    it("/apply-plan replies 'only in code mode' when setPlanMode is missing", () => {
+      const r = handleSlash("apply-plan", [], makeLoop());
+      expect(r.info).toMatch(/only available inside `reasonix code`/);
+    });
+
+    it("/apply-plan flips plan mode off, clears pending, and resubmits the implement-now synthetic", () => {
+      const setCalls: boolean[] = [];
+      const clearCalls: number[] = [];
+      const r = handleSlash("apply-plan", [], makeLoop(), {
+        setPlanMode: (on) => setCalls.push(on),
+        clearPendingPlan: () => {
+          clearCalls.push(1);
+        },
+      });
+      expect(setCalls).toEqual([false]);
+      expect(clearCalls).toEqual([1]);
+      expect(r.info).toMatch(/plan approved/);
+      expect(r.resubmit).toMatch(/Implement it now/);
+      expect(r.resubmit).toMatch(/out of plan mode/);
+    });
+
+    it("/apply-plan works without a clearPendingPlan callback (only setPlanMode required)", () => {
+      const setCalls: boolean[] = [];
+      const r = handleSlash("apply-plan", [], makeLoop(), {
+        setPlanMode: (on) => setCalls.push(on),
+        // clearPendingPlan omitted — /apply-plan must still work
+      });
+      expect(setCalls).toEqual([false]);
+      expect(r.resubmit).toMatch(/Implement it now/);
+    });
+
+    it("/status surfaces plan mode when it's on", () => {
+      const r = handleSlash("status", [], makeLoop(), { planMode: true });
+      expect(r.info).toMatch(/plan\s+ON/);
+    });
+
+    it("/status hides the plan line when plan mode is off", () => {
+      const r = handleSlash("status", [], makeLoop(), { planMode: false });
+      expect(r.info).not.toMatch(/plan\s+ON/);
     });
   });
 });

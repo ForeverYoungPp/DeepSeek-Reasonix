@@ -10,6 +10,13 @@ export interface StatsPanelProps {
   harvestOn?: boolean;
   branchBudget?: number;
   /**
+   * True when `reasonix code` is currently running in read-only Plan
+   * Mode. Surfaced as a red "PLAN" tag in the panel header so the user
+   * can tell at a glance that edits are gated behind submit_plan +
+   * approval.
+   */
+  planMode?: boolean;
+  /**
    * Account balance fetched once at launch (and optionally refreshed
    * per-turn by the TUI). `null` or absent hides the balance cell
    * entirely — /user/balance failed or the user ran with `--no-config`.
@@ -26,6 +33,7 @@ export function StatsPanel({
   prefixHash,
   harvestOn,
   branchBudget,
+  planMode,
   balance,
 }: StatsPanelProps) {
   const hitPct = (summary.cacheHitRatio * 100).toFixed(1);
@@ -50,6 +58,12 @@ export function StatsPanel({
           <Text dimColor>{prefixHash}</Text>
           {harvestOn ? <Text color="magenta"> · harvest</Text> : null}
           {branchOn ? <Text color="blue"> · branch{branchBudget}</Text> : null}
+          {planMode ? (
+            <Text color="red" bold>
+              {" "}
+              · PLAN
+            </Text>
+          ) : null}
         </Text>
         <Text dimColor>turns {summary.turns} · type /help</Text>
       </Box>

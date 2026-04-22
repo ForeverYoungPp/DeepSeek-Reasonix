@@ -77,6 +77,7 @@ export function registerFilesystemTools(
     name: "read_file",
     description:
       "Read a file under the sandbox root. Returns the full contents (truncated with a notice if larger than the per-call cap). Paths may be relative to the root or absolute-under-root.",
+    readOnly: true,
     parameters: {
       type: "object",
       properties: {
@@ -117,6 +118,7 @@ export function registerFilesystemTools(
     name: "list_directory",
     description:
       "List entries in a directory under the sandbox root. Returns one line per entry, marking directories with a trailing slash. Not recursive — use directory_tree for that.",
+    readOnly: true,
     parameters: {
       type: "object",
       properties: {
@@ -138,6 +140,7 @@ export function registerFilesystemTools(
     name: "directory_tree",
     description:
       "Recursively list entries in a directory. Shows indented tree structure with directories marked '/'. Caps output so a huge tree doesn't drown the context.",
+    readOnly: true,
     parameters: {
       type: "object",
       properties: {
@@ -186,6 +189,7 @@ export function registerFilesystemTools(
     name: "search_files",
     description:
       "Find files whose NAME matches a substring or regex. Case-insensitive. Walks the directory recursively under the sandbox root. Returns one path per line.",
+    readOnly: true,
     parameters: {
       type: "object",
       properties: {
@@ -243,6 +247,7 @@ export function registerFilesystemTools(
     name: "get_file_info",
     description:
       "Stat a path under the sandbox root. Returns type (file|directory|symlink), size in bytes, mtime in ISO-8601.",
+    readOnly: true,
     parameters: {
       type: "object",
       properties: {

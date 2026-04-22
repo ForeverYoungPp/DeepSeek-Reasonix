@@ -18,6 +18,8 @@ import type { ToolRegistry } from "../../tools.js";
 import { formatCommandResult, runCommand } from "../../tools/shell.js";
 import { openTranscriptFile, recordFromLoopEvent, writeRecord } from "../../transcript.js";
 import { type DisplayEvent, EventRow } from "./EventLog.js";
+import { PlanConfirm, type PlanConfirmChoice } from "./PlanConfirm.js";
+import { PlanRefineInput } from "./PlanRefineInput.js";
 import { PromptInput } from "./PromptInput.js";
 import { ShellConfirm, type ShellConfirmChoice, derivePrefix } from "./ShellConfirm.js";
 import { SlashSuggestions } from "./SlashSuggestions.js";
@@ -150,6 +152,28 @@ export function App({
   // project / Deny and we feed the result back as a synthetic user
   // message so the model sees what happened.
   const [pendingShell, setPendingShell] = useState<string | null>(null);
+  // Plan text the model submitted via `submit_plan` while plan mode
+  // was active. Non-null renders PlanConfirm; user picks Approve /
+  // Refine / Cancel and we drive the loop from there. Separate from
+  // `planMode` because a pending plan is a one-shot decision even if
+  // plan mode stays on (Refine keeps mode on; Approve/Cancel flip off).
+  const [pendingPlan, setPendingPlan] = useState<string | null>(null);
+  // Stashed plan + intent while the user types free-form feedback
+  // (refinement or last instructions on approve). When the picker
+  // returns "refine" or "approve", we defer the loop-resume and show
+  // PlanRefineInput. User types + Enter → we ship it; Esc → restore
+  // pendingPlan and re-show the picker. Letting Approve also take
+  // input closes the "model left open questions, user had no place
+  // to answer them" hole.
+  const [stagedInput, setStagedInput] = useState<{
+    plan: string;
+    mode: "refine" | "approve";
+  } | null>(null);
+  // Plan-mode indicator — displayed in the StatsPanel, mirrored onto
+  // the ToolRegistry so dispatch enforces read-only. Toggled via the
+  // `/plan` slash and PlanConfirm picker. Ephemeral — not persisted
+  // across launches (you explicitly opt in per session).
+  const [planMode, setPlanMode] = useState<boolean>(false);
   // Text waiting to be submitted AFTER the current turn finishes.
   // Set by ShellConfirm's onChoose when the user approves faster than
   // the model's "awaiting confirmation" response. We can't call
@@ -431,6 +455,25 @@ export function App({
     [model, prefixHash],
   );
 
+  /**
+   * Toggle plan mode on the local state AND on the ToolRegistry. The
+   * registry's copy is what actually gates dispatch; the local state
+   * drives the StatsPanel indicator and slash ergonomics. Kept in sync
+   * by funneling every toggle through this setter.
+   */
+  const togglePlanMode = useCallback(
+    (on: boolean) => {
+      setPlanMode(on);
+      tools?.setPlanMode(on);
+    },
+    [tools],
+  );
+
+  /** Clear the pending-plan picker state; safe to call unconditionally. */
+  const clearPendingPlan = useCallback(() => {
+    setPendingPlan(null);
+  }, []);
+
   const handleSubmit = useCallback(
     async (raw: string) => {
       let text = raw.trim();
@@ -479,6 +522,9 @@ export function App({
           pendingEditCount: codeMode ? pendingEdits.current.length : undefined,
           toolHistory: () => toolHistoryRef.current,
           memoryRoot: codeMode?.rootDir ?? process.cwd(),
+          planMode,
+          setPlanMode: codeMode ? togglePlanMode : undefined,
+          clearPendingPlan: codeMode ? clearPendingPlan : undefined,
         });
         if (result.exit) {
           transcriptRef.current?.end();
@@ -710,6 +756,24 @@ export function App({
                 /* malformed args — skip the prompt */
               }
             }
+            // submit_plan fired while plan mode was on — the registry
+            // serialized `{ error, plan }` via PlanProposedError's
+            // toToolResult(). Extract the plan and mount PlanConfirm.
+            // Only the latest submission is tracked; a second overrides.
+            if (
+              codeMode &&
+              ev.toolName === "submit_plan" &&
+              ev.content.includes('"PlanProposedError:')
+            ) {
+              try {
+                const parsed = JSON.parse(ev.content) as { plan?: unknown };
+                if (typeof parsed.plan === "string" && parsed.plan.trim()) {
+                  setPendingPlan(parsed.plan.trim());
+                }
+              } catch {
+                /* malformed payload — skip the picker */
+              }
+            }
           } else if (ev.role === "error") {
             setHistorical((prev) => [
               ...prev,
@@ -743,6 +807,7 @@ export function App({
     },
     [
       busy,
+      clearPendingPlan,
       codeApply,
       codeDiscard,
       codeMode,
@@ -751,7 +816,9 @@ export function App({
       loop,
       mcpSpecs,
       mcpServers,
+      planMode,
       slashSelected,
+      togglePlanMode,
       writeTranscript,
     ],
   );
@@ -835,6 +902,125 @@ export function App({
     }
   }, [busy, queuedSubmit, handleSubmit]);
 
+  /**
+   * PlanConfirm callback. Three outcomes, all ending with a synthetic
+   * user message so the model sees the verdict on its next turn:
+   *   - approve → exit plan mode, tell the model to implement now.
+   *   - refine  → stay in plan mode, tell the model to revise.
+   *   - cancel  → exit plan mode, tell the model to drop the plan.
+   * Mirrors handleShellConfirm's busy-queue dance — if the turn is
+   * still streaming "plan submitted, waiting" chatter when the user
+   * picks, we abort it and queue the synthetic for the effect above.
+   *
+   * `approve` is also callable with no pending plan (via the
+   * `/apply-plan` slash fallback, used when the model wrote a plan in
+   * assistant text instead of calling submit_plan). In that case we
+   * just flip plan mode off and push the implement-now message.
+   */
+  const handlePlanConfirm = useCallback(
+    async (choice: PlanConfirmChoice) => {
+      const hadPendingPlan = pendingPlan !== null;
+      if (!hadPendingPlan && choice !== "approve") {
+        // Refine / Cancel without a pending plan is a no-op; only the
+        // /apply-plan fallback makes sense without one.
+        return;
+      }
+
+      if (choice === "refine" || choice === "approve") {
+        // Two-step: stash the plan + the intent, show the input, wait
+        // for user feedback before pushing anything. Approve collects
+        // "last instructions / answers to open questions" (blank is
+        // fine, user can just hit Enter). Refine collects required
+        // feedback so the model has concrete guidance to revise.
+        if (pendingPlan) {
+          setStagedInput({ plan: pendingPlan, mode: choice });
+          setPendingPlan(null);
+        } else if (choice === "approve") {
+          // /apply-plan fallback path — no pending plan, just approve.
+          setStagedInput({ plan: "", mode: "approve" });
+        }
+        return;
+      }
+
+      // Cancel — no input needed, fire immediately.
+      setPendingPlan(null);
+      togglePlanMode(false);
+      const marker = "▸ plan cancelled";
+      const synthetic =
+        "The plan was cancelled. Drop it entirely. Ask me what I actually want before proposing another plan or making any changes.";
+      setHistorical((prev) => [
+        ...prev,
+        { id: `plan-${choice}-${Date.now()}`, role: "info", text: marker },
+      ]);
+      if (busy) {
+        loop.abort();
+        setQueuedSubmit(synthetic);
+      } else {
+        await handleSubmit(synthetic);
+      }
+    },
+    [pendingPlan, togglePlanMode, busy, loop, handleSubmit],
+  );
+
+  /**
+   * Fired when the user submits feedback from the inline input. The
+   * staged `mode` decides whether this is a refine or approve: refine
+   * stays in plan mode and asks the model to revise; approve exits
+   * plan mode and pushes the implement synthetic, with any user
+   * guidance (answers to open questions, last-minute preferences)
+   * included verbatim.
+   */
+  const handleStagedInputSubmit = useCallback(
+    async (feedback: string) => {
+      const staged = stagedInput;
+      setStagedInput(null);
+      if (!staged) return;
+      const trimmed = feedback.trim();
+
+      let synthetic: string;
+      let marker: string;
+      if (staged.mode === "approve") {
+        togglePlanMode(false);
+        if (trimmed) {
+          synthetic = `The plan above has been approved. Implement it now. You are out of plan mode — use edit_file / write_file / run_command as needed.\n\nUser's additional instructions / answers to your open questions:\n\n${trimmed}\n\nFactor these in before the first edit. Stick to the plan unless you discover a concrete reason to deviate; if you do, tell me and wait for a response.`;
+          marker = `▸ plan approved + instructions — ${trimmed.length > 50 ? `${trimmed.slice(0, 50)}…` : trimmed}`;
+        } else {
+          synthetic =
+            "The plan above has been approved. Implement it now. You are out of plan mode — use edit_file / write_file / run_command as needed. If the plan listed open questions and I didn't answer them, default to the safest interpretation and call them out in your first reply. Don't fabricate preferences — if a question is truly unanswerable without me, stop and ask.";
+          marker = "▸ plan approved — implementing";
+        }
+      } else {
+        // refine
+        if (trimmed) {
+          synthetic = `The plan needs refinement. User feedback / answers:\n\n${trimmed}\n\nStay in plan mode — address the feedback (explore more if needed), then submit an improved submit_plan call. Don't propose a near-identical plan unless you explain why the feedback doesn't apply.`;
+          marker = `▸ refining — ${trimmed.length > 50 ? `${trimmed.slice(0, 50)}…` : trimmed}`;
+        } else {
+          synthetic =
+            "The plan needs refinement, but the user didn't give specifics. Ask them one or two concrete questions — scope, approach, file boundaries, or the risks you flagged — then wait for their answer before submitting an updated plan.";
+          marker = "▸ refining — asking the model to clarify";
+        }
+      }
+
+      setHistorical((prev) => [
+        ...prev,
+        { id: `plan-${staged.mode}-${Date.now()}`, role: "info", text: marker },
+      ]);
+      if (busy) {
+        loop.abort();
+        setQueuedSubmit(synthetic);
+      } else {
+        await handleSubmit(synthetic);
+      }
+    },
+    [stagedInput, togglePlanMode, busy, loop, handleSubmit],
+  );
+
+  /** Esc on the inline input — restore the picker without resuming. */
+  const handleStagedInputCancel = useCallback(() => {
+    if (stagedInput?.plan) setPendingPlan(stagedInput.plan);
+    setStagedInput(null);
+  }, [stagedInput]);
+
   return (
     <TickerProvider disabled={PLAIN_UI}>
       <Box flexDirection="column">
@@ -844,6 +1030,7 @@ export function App({
           prefixHash={prefixHash}
           harvestOn={loop.harvestEnabled}
           branchBudget={loop.branchOptions.budget}
+          planMode={planMode}
           balance={balance}
         />
         <Static items={historical}>{(item) => <EventRow key={item.id} event={item} />}</Static>
@@ -854,15 +1041,20 @@ export function App({
           attention. They come back naturally once the user chooses and
           the next turn begins.
         */}
-        {!PLAIN_UI && !pendingShell && streaming ? (
+        {!PLAIN_UI && !pendingShell && !pendingPlan && !stagedInput && streaming ? (
           <Box marginY={1}>
             <EventRow event={streaming} />
           </Box>
         ) : null}
-        {!PLAIN_UI && !pendingShell && ongoingTool ? (
+        {!PLAIN_UI && !pendingShell && !pendingPlan && !stagedInput && ongoingTool ? (
           <OngoingToolRow tool={ongoingTool} progress={toolProgress} />
         ) : null}
-        {!PLAIN_UI && !pendingShell && !ongoingTool && statusLine ? (
+        {!PLAIN_UI &&
+        !pendingShell &&
+        !pendingPlan &&
+        !stagedInput &&
+        !ongoingTool &&
+        statusLine ? (
           <StatusRow text={statusLine} />
         ) : null}
         {/*
@@ -873,10 +1065,25 @@ export function App({
           without a label. Catches micro-gaps between events that the
           targeted status lines don't cover.
         */}
-        {!PLAIN_UI && !pendingShell && busy && !streaming && !ongoingTool && !statusLine ? (
+        {!PLAIN_UI &&
+        !pendingShell &&
+        !pendingPlan &&
+        !stagedInput &&
+        busy &&
+        !streaming &&
+        !ongoingTool &&
+        !statusLine ? (
           <StatusRow text="processing…" />
         ) : null}
-        {pendingShell ? (
+        {stagedInput ? (
+          <PlanRefineInput
+            mode={stagedInput.mode}
+            onSubmit={handleStagedInputSubmit}
+            onCancel={handleStagedInputCancel}
+          />
+        ) : pendingPlan ? (
+          <PlanConfirm plan={pendingPlan} onChoose={handlePlanConfirm} />
+        ) : pendingShell ? (
           <ShellConfirm
             command={pendingShell}
             allowPrefix={derivePrefix(pendingShell)}

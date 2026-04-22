@@ -42,6 +42,8 @@ export { ToolRegistry } from "./tools.js";
 export type { ToolDefinition, ToolCallContext } from "./tools.js";
 export { registerFilesystemTools } from "./tools/filesystem.js";
 export type { FilesystemToolsOptions } from "./tools/filesystem.js";
+export { PlanProposedError, registerPlanTool } from "./tools/plan.js";
+export type { PlanToolOptions } from "./tools/plan.js";
 export {
   NeedsConfirmationError,
   formatCommandResult,
@@ -219,4 +221,4 @@ export type {
   JSONSchema,
 } from "./types.js";
 
-export const VERSION = "0.4.17";
+export const VERSION = "0.4.18";
