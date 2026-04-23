@@ -13,24 +13,26 @@ import { useTick } from "./ticker.js";
  * to plain cyan via Ink's color pipeline, so the worst case is still
  * legible.
  */
-const WORDMARK_GRADIENT = [
-  "#5eead4", // teal-300 — ◈ mark
-  "#5eead4", // teal-300 — R
-  "#67e8f9", // cyan-300 — E
-  "#7dd3fc", // sky-300  — A
-  "#93c5fd", // blue-300 — S
-  "#a5b4fc", // indigo-300 — O
-  "#c4b5fd", // violet-300 — N
-  "#d8b4fe", // purple-300 — I
-  "#f0abfc", // fuchsia-300 — X
-] as const;
-const WORDMARK_TEXT = "◈ REASONIX";
+const WORDMARK_STYLES: ReadonlyArray<{ ch: string; color: string; isLogo: boolean }> = [
+  { ch: "◈", color: "#5eead4", isLogo: true }, // teal — brand mark
+  { ch: " ", color: "#5eead4", isLogo: false },
+  { ch: "R", color: "#67e8f9", isLogo: false }, // cyan
+  { ch: "E", color: "#7dd3fc", isLogo: false }, // sky
+  { ch: "A", color: "#93c5fd", isLogo: false }, // blue
+  { ch: "S", color: "#a5b4fc", isLogo: false }, // indigo
+  { ch: "O", color: "#c4b5fd", isLogo: false }, // violet
+  { ch: "N", color: "#d8b4fe", isLogo: false }, // purple
+  { ch: "I", color: "#f0abfc", isLogo: false }, // fuchsia
+  { ch: "X", color: "#f0abfc", isLogo: false }, // fuchsia
+];
 
 /**
  * Gradient-filled, animated app wordmark. The `◈` brand mark breathes
  * (bold on/off) once every ~1.6s when idle, ~600ms when the model is
  * working, so a glance at the top of the screen tells you immediately
- * whether the app is doing something.
+ * whether the app is doing something. Letters' keys use the char+color
+ * pair (not an index) so React state attaches to the glyph itself;
+ * fine because WORDMARK_STYLES never reorders.
  */
 function Wordmark({ busy }: { busy: boolean }) {
   const tick = useTick();
@@ -39,10 +41,9 @@ function Wordmark({ busy }: { busy: boolean }) {
   const bright = Math.floor(tick / period) % 2 === 0;
   return (
     <Text>
-      {WORDMARK_TEXT.split("").map((ch, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: chars are fixed by WORDMARK_TEXT; no reordering
-        <Text key={`wm-${i}`} color={WORDMARK_GRADIENT[i] ?? "#5eead4"} bold={i === 0 ? bright : true}>
-          {ch}
+      {WORDMARK_STYLES.map((c) => (
+        <Text key={`${c.ch}-${c.color}`} color={c.color} bold={c.isLogo ? bright : true}>
+          {c.ch}
         </Text>
       ))}
     </Text>
@@ -292,7 +293,7 @@ function ContextCell({
     return (
       <Text>
         <Text dimColor>ctx </Text>
-        <Text dimColor>—  (no turns yet)</Text>
+        <Text dimColor>— (no turns yet)</Text>
       </Text>
     );
   }
@@ -339,7 +340,9 @@ function CacheCell({
       <Text>
         <Text dimColor>cache </Text>
         <Text dimColor>{pct}% </Text>
-        <Text dimColor italic>(cold start)</Text>
+        <Text dimColor italic>
+          (cold start)
+        </Text>
       </Text>
     );
   }

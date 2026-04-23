@@ -74,7 +74,10 @@ export const EventRow = React.memo(function EventRow({
     return (
       <Box marginTop={event.leadSeparator ? 1 : 0}>
         <RoleGlyph glyph={ROLE_GLYPH.user} color="cyan" />
-        <Text>{"  "}{event.text}</Text>
+        <Text>
+          {"  "}
+          {event.text}
+        </Text>
       </Box>
     );
   }
@@ -84,9 +87,7 @@ export const EventRow = React.memo(function EventRow({
       <Box flexDirection="column" marginTop={1}>
         <Box>
           <RoleGlyph glyph={ROLE_GLYPH.assistant} color="green" />
-          {event.stats ? (
-            <Text dimColor>{`  ${event.stats.model}`}</Text>
-          ) : null}
+          {event.stats ? <Text dimColor>{`  ${event.stats.model}`}</Text> : null}
         </Box>
         <Box flexDirection="column" paddingLeft={2} marginTop={1}>
           {event.branch ? <BranchBlock branch={event.branch} /> : null}
@@ -144,7 +145,10 @@ export const EventRow = React.memo(function EventRow({
     return (
       <Box marginTop={1}>
         <RoleGlyph glyph={ROLE_GLYPH.error} color="red" />
-        <Text color="red">{"  "}{event.text}</Text>
+        <Text color="red">
+          {"  "}
+          {event.text}
+        </Text>
       </Box>
     );
   }
@@ -159,7 +163,10 @@ export const EventRow = React.memo(function EventRow({
     return (
       <Box>
         <RoleGlyph glyph={ROLE_GLYPH.warning} color="yellow" />
-        <Text color="yellow">{"  "}{event.text}</Text>
+        <Text color="yellow">
+          {"  "}
+          {event.text}
+        </Text>
       </Box>
     );
   }
@@ -188,7 +195,9 @@ function TurnSeparator() {
   return (
     <Box marginTop={1} marginBottom={1}>
       <Text dimColor>{left}</Text>
-      <Text color="cyan" bold>{" ◆ "}</Text>
+      <Text color="cyan" bold>
+        {" ◆ "}
+      </Text>
       <Text dimColor>{right}</Text>
     </Box>
   );
@@ -287,7 +296,7 @@ function ReasoningBlock({ reasoning }: { reasoning: string }) {
     <Box marginBottom={1}>
       <Text dimColor>▏ </Text>
       <Text dimColor italic>
-        thinking  {preview}
+        thinking {preview}
       </Text>
     </Box>
   );
@@ -331,7 +340,9 @@ function StreamingAssistant({ event }: { event: DisplayEvent }) {
           <Box>
             <PulsingAssistantGlyph />
             <Text color="blue">
-              {"  ⎇ launching "}{p.total}{" parallel samples (R1 thinking in parallel)…  "}
+              {"  ⎇ launching "}
+              {p.total}
+              {" parallel samples (R1 thinking in parallel)…  "}
             </Text>
             <Elapsed />
           </Box>
@@ -347,7 +358,11 @@ function StreamingAssistant({ event }: { event: DisplayEvent }) {
         <Box>
           <PulsingAssistantGlyph />
           <Text color="blue">
-            {"  ⎇ branching "}{p.completed}/{p.total}{" ("}{pct}{"%)  "}
+            {"  ⎇ branching "}
+            {p.completed}/{p.total}
+            {" ("}
+            {pct}
+            {"%)  "}
           </Text>
           <Elapsed />
         </Box>
@@ -425,7 +440,9 @@ function StreamingAssistant({ event }: { event: DisplayEvent }) {
         </Text>
       ) : reasoningOnly ? (
         <Text color="yellow" italic>
-          {"  R1 is thinking before it speaks — body text arrives when reasoning finishes (typically 20-90s, this is normal)"}
+          {
+            "  R1 is thinking before it speaks — body text arrives when reasoning finishes (typically 20-90s, this is normal)"
+          }
         </Text>
       ) : toolCallOnly ? (
         <Text color="magenta" italic>

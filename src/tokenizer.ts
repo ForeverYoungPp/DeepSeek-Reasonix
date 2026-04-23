@@ -118,7 +118,11 @@ function resolveDataPath(): string {
   } catch {
     // CJS fallback — `require.resolve` finds the package root.
     const req = createRequire(import.meta.url);
-    return join(dirname(req.resolve("reasonix/package.json")), "data", "deepseek-tokenizer.json.gz");
+    return join(
+      dirname(req.resolve("reasonix/package.json")),
+      "data",
+      "deepseek-tokenizer.json.gz",
+    );
   }
 }
 
@@ -218,7 +222,7 @@ function bpeEncode(piece: string, mergeRank: Map<string, number>): string[] {
   let word: string[] = Array.from(piece);
   while (true) {
     let bestIdx = -1;
-    let bestRank = Infinity;
+    let bestRank = Number.POSITIVE_INFINITY;
     for (let i = 0; i < word.length - 1; i++) {
       const pair = `${word[i]} ${word[i + 1]}`;
       const rank = mergeRank.get(pair);

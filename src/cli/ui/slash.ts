@@ -671,7 +671,8 @@ export function handleSlash(
       const logTokens = userTokens + assistantTokens + toolResultTokens + toolCallTokens;
       const total = systemTokens + toolsTokens + logTokens;
       const ctxMax = DEEPSEEK_CONTEXT_TOKENS[loop.model] ?? DEFAULT_CONTEXT_TOKENS;
-      const pct = (n: number) => (total > 0 ? `${Math.round((n / total) * 100)}%`.padStart(4) : "  0%");
+      const pct = (n: number) =>
+        total > 0 ? `${Math.round((n / total) * 100)}%`.padStart(4) : "  0%";
       const row = (label: string, n: number, note = "") =>
         `  ${label.padEnd(20)}${compactNum(n).padStart(8)} tokens ${pct(n)}${note ? `   ${note}` : ""}`;
 
@@ -696,7 +697,9 @@ export function handleSlash(
         lines.push("");
         lines.push(`Top tool results by cost (of ${toolBreakdown.length} total):`);
         for (const t of top) {
-          lines.push(`    turn ${String(t.turn).padStart(3)}  ${t.name.padEnd(22)} ${compactNum(t.tokens).padStart(8)} tokens`);
+          lines.push(
+            `    turn ${String(t.turn).padStart(3)}  ${t.name.padEnd(22)} ${compactNum(t.tokens).padStart(8)} tokens`,
+          );
         }
       }
 
@@ -770,7 +773,9 @@ export function handleSlash(
         };
       }
       if (list.length === 0) {
-        return { info: "DeepSeek /models returned an empty list. Try /models again, or check your account status at api-docs.deepseek.com." };
+        return {
+          info: "DeepSeek /models returned an empty list. Try /models again, or check your account status at api-docs.deepseek.com.",
+        };
       }
       const current = loop.model;
       const lines = list.map((id) => (id === current ? `▸ ${id}  (current)` : `  ${id}`));

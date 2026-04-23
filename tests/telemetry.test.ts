@@ -87,10 +87,7 @@ describe("inputCostUsd / outputCostUsd", () => {
   it("input cost covers cache-hit + cache-miss but NOT completion", () => {
     const u = new Usage(1000, 100, 1100, 800, 200);
     const i = inputCostUsd("deepseek-chat", u);
-    expect(i).toBeCloseTo(
-      (800 * CHAT.inputCacheHit + 200 * CHAT.inputCacheMiss) / 1_000_000,
-      10,
-    );
+    expect(i).toBeCloseTo((800 * CHAT.inputCacheHit + 200 * CHAT.inputCacheMiss) / 1_000_000, 10);
   });
 
   it("output cost covers completion only", () => {

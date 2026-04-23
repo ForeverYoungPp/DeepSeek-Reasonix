@@ -643,7 +643,11 @@ describe("handleSlash", () => {
       role: "assistant",
       content: "",
       tool_calls: [
-        { id: "c1", type: "function", function: { name: "list_directory", arguments: '{"path":"."}' } },
+        {
+          id: "c1",
+          type: "function",
+          function: { name: "list_directory", arguments: '{"path":"."}' },
+        },
       ],
     });
     loop.log.append({

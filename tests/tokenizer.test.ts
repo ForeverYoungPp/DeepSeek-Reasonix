@@ -73,8 +73,7 @@ describe("estimateConversationTokens", () => {
       { content: "你好" },
       { content: "Hello!" },
     ]);
-    const manual =
-      countTokens("you are helpful") + countTokens("你好") + countTokens("Hello!");
+    const manual = countTokens("you are helpful") + countTokens("你好") + countTokens("Hello!");
     expect(n).toBe(manual);
   });
 
@@ -82,9 +81,7 @@ describe("estimateConversationTokens", () => {
     const withCalls = estimateConversationTokens([
       {
         content: null,
-        tool_calls: [
-          { id: "c1", function: { name: "read_file", arguments: '{"path":"a.ts"}' } },
-        ],
+        tool_calls: [{ id: "c1", function: { name: "read_file", arguments: '{"path":"a.ts"}' } }],
       },
     ]);
     // The tool_calls serialization itself has weight; should be > 0.
@@ -93,11 +90,7 @@ describe("estimateConversationTokens", () => {
 
   it("ignores missing / empty content without crashing", () => {
     expect(
-      estimateConversationTokens([
-        { content: null },
-        { content: "" },
-        { content: undefined },
-      ]),
+      estimateConversationTokens([{ content: null }, { content: "" }, { content: undefined }]),
     ).toBe(0);
   });
 });

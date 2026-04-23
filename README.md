@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="docs/logo.svg" alt="Reasonix — DeepSeek-native agent framework" width="640"/>
+</p>
+
+<p align="center">
+  <em>Cache-first agent loop for DeepSeek V3 &amp; R1 — Ink TUI, MCP first-class, no LangChain.</em>
+</p>
+
 # Reasonix
 
 [![npm version](https://img.shields.io/npm/v/reasonix.svg)](https://www.npmjs.com/package/reasonix)
