@@ -72,6 +72,7 @@ export type {
 } from "./tools/subagent.js";
 export {
   NeedsConfirmationError,
+  detectShellOperator,
   formatCommandResult,
   injectPowerShellUtf8,
   isAllowed,

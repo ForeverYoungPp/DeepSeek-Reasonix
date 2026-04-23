@@ -172,6 +172,71 @@ export function tokenizeCommand(cmd: string): string[] {
 }
 
 /**
+ * Scan `cmd` for a shell operator (`|`, `||`, `>`, `>>`, `<`, `<<`,
+ * `&`, `&&`, `2>`, `2>>`, `2>&1`, `&>`) that appears unquoted at a
+ * token boundary. Returns the operator string, or null if none.
+ *
+ * Why this exists: `run_command` documents "no shell expansion, no
+ * pipes, no redirects" (the tool spawns argv directly, not through a
+ * shell), but when the model writes `dir | findstr foo` the `|`
+ * survives tokenization as a standalone token and gets quoted as the
+ * literal string `"|"` by `quoteForCmdExe` — cmd.exe sees it as an
+ * argument, not an operator, so the pipe silently fails. Detecting
+ * operators up front lets us throw a clear error ("split into separate
+ * calls") instead of letting the command run with surprising results.
+ *
+ * Quoted operators (`grep "a|b"`) and operator characters embedded in
+ * larger tokens (`--flag=1&2`) are NOT flagged — those are literal
+ * argv bytes and are safe to pass through.
+ *
+ * Exported for testing.
+ */
+export function detectShellOperator(cmd: string): string | null {
+  const opPrefix = /^(?:2>&1|&>|\|{1,2}|&{1,2}|2>{1,2}|>{1,2}|<{1,2})/;
+  let cur = "";
+  let curQuoted = false;
+  let quote: '"' | "'" | null = null;
+  const check = (): string | null => {
+    if (cur.length === 0 && !curQuoted) return null;
+    if (!curQuoted) {
+      const m = opPrefix.exec(cur);
+      if (m) return m[0] ?? null;
+    }
+    return null;
+  };
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]!;
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      } else if (ch === "\\" && quote === '"' && i + 1 < cmd.length) {
+        cur += cmd[++i];
+        curQuoted = true;
+      } else {
+        cur += ch;
+        curQuoted = true;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      curQuoted = true;
+      continue;
+    }
+    if (ch === " " || ch === "\t") {
+      const op = check();
+      if (op) return op;
+      cur = "";
+      curQuoted = false;
+      continue;
+    }
+    cur += ch;
+  }
+  if (quote) return null; // let tokenizeCommand throw the unclosed-quote error
+  return check();
+}
+
+/**
  * Return true when `cmd` matches an allowlisted prefix. Exported for
  * testing. Match is on the space-normalized leading tokens so
  * `git   status  -s ` and `git status` both match `git status`.
@@ -205,6 +270,12 @@ export async function runCommand(
 ): Promise<RunCommandResult> {
   const argv = tokenizeCommand(cmd);
   if (argv.length === 0) throw new Error("run_command: empty command");
+  const operator = detectShellOperator(cmd);
+  if (operator !== null) {
+    throw new Error(
+      `run_command: shell operator "${operator}" is not supported — this tool spawns one process, no shell expansion. Split into separate run_command calls and combine the output in your reasoning (e.g. instead of \`grep foo *.ts | wc -l\`, call \`grep -c foo *.ts\` or two separate commands). To pass "${operator}" as a literal argument, wrap it in quotes.`,
+    );
+  }
   const timeoutMs = (opts.timeoutSec ?? DEFAULT_TIMEOUT_SEC) * 1000;
   const maxChars = opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
 
@@ -538,7 +609,7 @@ export function registerShellTools(registry: ToolRegistry, opts: ShellToolsOptio
         command: {
           type: "string",
           description:
-            "Full command line. Tokenized with POSIX-ish quoting; no shell expansion, no pipes, no redirects.",
+            'Full command line. Tokenized with POSIX-ish quoting; no shell expansion. Pipes (`|`), redirects (`>`, `<`, `2>`), and `&&`/`||` chaining are rejected with an error — split into separate calls instead. To pass an operator character as a literal argument (e.g. a regex), wrap it in quotes: `grep "a|b" file.txt`.',
         },
         timeoutSec: {
           type: "integer",

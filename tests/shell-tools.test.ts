@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ToolRegistry } from "../src/tools.js";
 import {
   NeedsConfirmationError,
+  detectShellOperator,
   formatCommandResult,
   injectPowerShellUtf8,
   isAllowed,
@@ -45,6 +46,97 @@ describe("tokenizeCommand", () => {
   it("returns an empty array for an empty command", () => {
     expect(tokenizeCommand("")).toEqual([]);
     expect(tokenizeCommand("   ")).toEqual([]);
+  });
+});
+
+describe("detectShellOperator", () => {
+  it("flags a standalone pipe", () => {
+    expect(detectShellOperator("dir /b *.ts | findstr foo")).toBe("|");
+  });
+
+  it("flags standalone redirects (>, >>, <, <<)", () => {
+    expect(detectShellOperator("echo hi > out.txt")).toBe(">");
+    expect(detectShellOperator("echo hi >> out.txt")).toBe(">>");
+    expect(detectShellOperator("sort < in.txt")).toBe("<");
+    expect(detectShellOperator("cat << EOF")).toBe("<<");
+  });
+
+  it("flags &&, ||, and single &", () => {
+    expect(detectShellOperator("a && b")).toBe("&&");
+    expect(detectShellOperator("a || b")).toBe("||");
+    expect(detectShellOperator("long_task &")).toBe("&");
+  });
+
+  it("flags fd-prefixed redirects", () => {
+    expect(detectShellOperator("cmd 2> err.log")).toBe("2>");
+    expect(detectShellOperator("cmd 2>> err.log")).toBe("2>>");
+    expect(detectShellOperator("cmd 2>&1")).toBe("2>&1");
+    expect(detectShellOperator("cmd &> all.log")).toBe("&>");
+  });
+
+  it("flags redirects stuck to the next token", () => {
+    expect(detectShellOperator("echo hi >out.txt")).toBe(">");
+    expect(detectShellOperator("sort <in.txt")).toBe("<");
+  });
+
+  it("does NOT flag operators inside double quotes", () => {
+    expect(detectShellOperator('grep "a|b" file.txt')).toBeNull();
+    expect(detectShellOperator('echo "a > b"')).toBeNull();
+    expect(detectShellOperator('git commit -m "feat & fix"')).toBeNull();
+  });
+
+  it("does NOT flag operators inside single quotes", () => {
+    expect(detectShellOperator("grep 'a|b' file.txt")).toBeNull();
+    expect(detectShellOperator("awk '{print $1 > $2}' file")).toBeNull();
+  });
+
+  it("does NOT flag operator characters embedded in larger unquoted tokens", () => {
+    // `--flag=1&2` is a single token; the `&` is a literal byte, not a
+    // shell operator. Same for regex-style args passed without quotes.
+    expect(detectShellOperator("cargo run -- --flag=1&2")).toBeNull();
+    expect(detectShellOperator("grep a|b file")).toBeNull();
+  });
+
+  it("returns null for plain commands", () => {
+    expect(detectShellOperator("git status")).toBeNull();
+    expect(detectShellOperator("ls -la")).toBeNull();
+    expect(detectShellOperator("")).toBeNull();
+  });
+
+  it("returns the FIRST operator when multiple are present", () => {
+    expect(detectShellOperator("a | b > c")).toBe("|");
+  });
+});
+
+describe("runCommand pipe/redirect rejection", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "reasonix-shell-pipe-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("rejects a pipe command with a helpful error", async () => {
+    await expect(runCommand("echo hi | cat", { cwd: tmp })).rejects.toThrow(
+      /shell operator "\|" is not supported/,
+    );
+  });
+
+  it("rejects a redirect command with a helpful error", async () => {
+    await expect(runCommand("echo hi > out.txt", { cwd: tmp })).rejects.toThrow(
+      /shell operator ">" is not supported/,
+    );
+  });
+
+  it("error message points the model at splitting the call", async () => {
+    try {
+      await runCommand("a && b", { cwd: tmp });
+    } catch (err) {
+      expect((err as Error).message).toMatch(/Split into separate run_command calls/i);
+      return;
+    }
+    throw new Error("expected runCommand to reject");
   });
 });
 
