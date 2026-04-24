@@ -1668,6 +1668,22 @@ export function App({
     [pendingPlan, togglePlanMode, busy, loop, handleSubmit],
   );
 
+  // Ref-wrapped stable alias. `handlePlanConfirm` has deps that churn
+  // every turn (busy toggles while the model is still streaming its
+  // wrap-up) — passing it directly to `React.memo(PlanConfirm)` breaks
+  // the memo's shallow prop compare, so even without the ticker the
+  // picker re-rendered on every parent state change. The ref keeps the
+  // identity stable across the whole picker lifetime; the callback
+  // itself always reads the latest closure via `.current`.
+  const handlePlanConfirmRef = useRef(handlePlanConfirm);
+  useEffect(() => {
+    handlePlanConfirmRef.current = handlePlanConfirm;
+  }, [handlePlanConfirm]);
+  const stableHandlePlanConfirm = useCallback(
+    async (choice: PlanConfirmChoice) => handlePlanConfirmRef.current(choice),
+    [],
+  );
+
   /**
    * Fired when the user submits feedback from the inline input. The
    * staged `mode` decides whether this is a refine or approve: refine
@@ -1728,7 +1744,7 @@ export function App({
   }, [stagedInput]);
 
   return (
-    <TickerProvider disabled={PLAIN_UI}>
+    <TickerProvider disabled={PLAIN_UI || !!pendingPlan || !!pendingShell}>
       <Box flexDirection="column">
         <StatsPanel
           summary={summary}
@@ -1795,7 +1811,11 @@ export function App({
             onCancel={handleStagedInputCancel}
           />
         ) : pendingPlan ? (
-          <PlanConfirm plan={pendingPlan} onChoose={handlePlanConfirm} projectRoot={hookCwd} />
+          <PlanConfirm
+            plan={pendingPlan}
+            onChoose={stableHandlePlanConfirm}
+            projectRoot={hookCwd}
+          />
         ) : pendingShell ? (
           <ShellConfirm
             command={pendingShell}

@@ -44,26 +44,30 @@ export interface PlanConfirmProps {
 
 const DEFAULT_MAX_RENDERED = 2400;
 /**
- * Reserved rows for the picker chrome (border + header + divider +
- * open-questions hint + SingleSelect with three options + footer + the
- * assistant-turn block Ink already printed above). Empirically ~16 on a
- * wide terminal; we round up to 18 to leave a visible strip of the plan
- * even on a 24-row default instead of pushing the picker out of view.
- *
- * When the terminal is this tall or shorter we fall through to a
- * minimum of 6 rendered body lines so the user sees SOMETHING rather
- * than a single-line stub.
+ * Reserved terminal rows for the picker chrome (border + header +
+ * divider + open-questions hint + SingleSelect with three options +
+ * footer + the assistant-turn block Ink already printed above).
+ * Empirically ~16; we round up to 18 for safety.
  */
 const PICKER_CHROME_ROWS = 18;
-const MIN_BODY_ROWS = 6;
+/**
+ * Rough markdown expansion factor. One source line commonly renders
+ * as 1–3 terminal rows: wrap on narrow terminals doubles long lines,
+ * code fences add top/bottom rules, list items get bullet indent,
+ * headings sometimes pick up blank rows. A factor of 2 is the
+ * conservative bet that lets us keep `bodyRowBudget` > 0 on a 24-row
+ * terminal while still guaranteeing the picker stays on-screen. If
+ * this is wrong in practice it's wrong in the "trim too aggressively"
+ * direction, which shows a truncation marker rather than flickering.
+ */
+const MARKDOWN_EXPANSION = 2;
+const MIN_BODY_ROWS = 4;
 
 /**
- * Trim `text` to the first `maxLines` lines, appending a truncation
- * marker when it was cut. Each line is clamped to ~ terminal width so
- * wrapped lines don't double-count against the row budget — we can't
- * know the exact rendered height of a Markdown block (headings, code
- * fences, list bullets add chrome), so the row cap is conservative on
- * purpose.
+ * Trim `text` to the first `maxLines` source lines, appending a
+ * truncation marker when it was cut. Source lines, NOT rendered rows
+ * — callers must divide their row budget by the expected markdown
+ * expansion factor before passing it here.
  */
 export function clampBodyByLines(text: string, maxLines: number): string {
   const lines = text.split("\n");
@@ -92,8 +96,12 @@ function PlanConfirmInner({
   // inside the terminal so Ink uses incremental diffs and the picker
   // stops thrashing. See Bug A in 0.5.14.
   const rows = terminalRows ?? process.stdout?.rows ?? 24;
-  const bodyRowBudget = Math.max(MIN_BODY_ROWS, rows - PICKER_CHROME_ROWS);
-  const visible = clampBodyByLines(charCapped, bodyRowBudget);
+  const renderedBudget = Math.max(MIN_BODY_ROWS * MARKDOWN_EXPANSION, rows - PICKER_CHROME_ROWS);
+  // Divide by the expansion factor so source-line clamp produces a
+  // rendered height that actually fits the terminal. Without this the
+  // rendered body overflows → Ink clears + redraws each frame → flicker.
+  const sourceLineBudget = Math.max(MIN_BODY_ROWS, Math.floor(renderedBudget / MARKDOWN_EXPANSION));
+  const visible = clampBodyByLines(charCapped, sourceLineBudget);
   // Crude signal for "the model left questions or risks for me" — the
   // typical section headings. Triggers an extra hint toward the Refine
   // option so users know where to answer them.
