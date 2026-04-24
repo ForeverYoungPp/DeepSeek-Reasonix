@@ -758,9 +758,17 @@ export function App({
       }
 
       // Helper: apply the current block + record into history + arm
-      // undo + echo a row. Used by auto mode AND by the various
-      // "apply" branches of the review modal so we don't duplicate
-      // the snapshot/apply/banner logic.
+      // undo. Used by auto mode AND by the various "apply" branches
+      // of the review modal so we don't duplicate the snapshot /
+      // apply / banner logic.
+      //
+      // Does NOT push an info row to scrollback: the caller is inside
+      // a tool-dispatch frame, so the returned string becomes the
+      // tool result AND the loop yields a `tool` event right after —
+      // which EventLog renders as a `▣ edit_file → …` block
+      // containing the same text. Pushing an info row here produced
+      // the "result shown twice" bug reported in 0.6 (one dim info
+      // row, then a nearly identical tool row directly below).
       const applyNow = (): string => {
         const snaps = snapshotBeforeEdits([block], codeMode.rootDir);
         const results = applyEditBlocks([block], codeMode.rootDir);
@@ -769,14 +777,6 @@ export function App({
           recordEdit("auto", [block], results, snaps);
           armUndoBanner(results);
         }
-        setHistorical((prev) => [
-          ...prev,
-          {
-            id: `ae-${Date.now()}-${Math.random()}`,
-            role: "info",
-            text: formatEditResults(results),
-          },
-        ]);
         return formatEditResults(results);
       };
 
