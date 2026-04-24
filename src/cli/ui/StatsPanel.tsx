@@ -99,6 +99,19 @@ export interface StatsPanelProps {
    * visible at a glance from anywhere on screen.
    */
   busy?: boolean;
+  /**
+   * /pro is queued — the next turn will run on v4-pro regardless of
+   * `model`. Rendered as a yellow `⇧ pro armed` pill in the header so
+   * the user has a clear "this turn will be expensive" signal before
+   * submitting their message.
+   */
+  proArmed?: boolean;
+  /**
+   * The CURRENT turn is running on v4-pro because the failure-
+   * escalation threshold fired mid-turn. Rendered as a red `⇧ pro
+   * escalated` pill. Clears at turn end.
+   */
+  escalated?: boolean;
 }
 
 /**
@@ -130,6 +143,8 @@ export function StatsPanel({
   balance,
   updateAvailable,
   busy,
+  proArmed,
+  escalated,
 }: StatsPanelProps) {
   const branchOn = (branchBudget ?? 1) > 1;
   const ctxMax = DEEPSEEK_CONTEXT_TOKENS[model] ?? DEFAULT_CONTEXT_TOKENS;
@@ -158,6 +173,8 @@ export function StatsPanel({
         updateAvailable={updateAvailable}
         narrow={narrow}
         busy={busy ?? false}
+        proArmed={proArmed ?? false}
+        escalated={escalated ?? false}
       />
       {narrow ? (
         <StackedMetrics
@@ -193,6 +210,8 @@ function Header({
   updateAvailable,
   narrow,
   busy,
+  proArmed,
+  escalated,
 }: {
   model: string;
   prefixHash: string;
@@ -206,6 +225,8 @@ function Header({
   updateAvailable?: string | null;
   narrow: boolean;
   busy: boolean;
+  proArmed: boolean;
+  escalated: boolean;
 }) {
   return (
     <Box justifyContent="space-between">
@@ -232,6 +253,15 @@ function Header({
         {editMode ? (
           <Text color={editMode === "auto" ? "magenta" : "cyan"} bold>
             {editMode === "auto" ? " · AUTO" : " · review"}
+          </Text>
+        ) : null}
+        {escalated ? (
+          <Text color="red" bold>
+            {" · ⇧ pro escalated"}
+          </Text>
+        ) : proArmed ? (
+          <Text color="yellow" bold>
+            {" · ⇧ pro armed"}
           </Text>
         ) : null}
       </Box>
@@ -386,6 +416,24 @@ function CacheCell({
   );
 }
 
+/**
+ * Color thresholds. Per-turn and session cumulative scale roughly 10×
+ * apart — a $0.20 single turn should feel just as warn-worthy as a $2
+ * session total. Values are rough "notice this" points, not hard caps.
+ */
+function turnCostColor(cost: number): "green" | "yellow" | "red" | undefined {
+  if (cost <= 0) return undefined;
+  if (cost >= 0.2) return "red";
+  if (cost >= 0.05) return "yellow";
+  return "green";
+}
+function sessionCostColor(cost: number): "green" | "yellow" | "red" | undefined {
+  if (cost <= 0) return undefined;
+  if (cost >= 5) return "red";
+  if (cost >= 0.5) return "yellow";
+  return "green";
+}
+
 function CostCell({
   summary,
   coldStart,
@@ -405,17 +453,17 @@ function CostCell({
   // so the dollar figure is front-loaded. Muting it during the
   // cold-start window keeps the "expensive first turn" from
   // reading as "something is wrong."
-  const primaryColor = coldStart ? undefined : "green";
+  const turnColor = coldStart ? undefined : turnCostColor(summary.lastTurnCostUsd);
+  const sessionColor = coldStart ? undefined : sessionCostColor(summary.totalCostUsd);
   return (
     <Text>
-      <Text dimColor>cost </Text>
-      <Text color={primaryColor} bold={!coldStart} dimColor={coldStart}>
-        ${summary.totalCostUsd.toFixed(6)}
+      <Text dimColor>turn </Text>
+      <Text color={turnColor} bold={!coldStart} dimColor={coldStart}>
+        ${summary.lastTurnCostUsd.toFixed(4)}
       </Text>
-      <Text dimColor>
-        {" (in "}${summary.totalInputCostUsd.toFixed(6)}
-        {" · out "}${summary.totalOutputCostUsd.toFixed(6)}
-        {")"}
+      <Text dimColor>{" · session "}</Text>
+      <Text color={sessionColor} bold={!coldStart} dimColor={coldStart}>
+        ${summary.totalCostUsd.toFixed(4)}
       </Text>
     </Text>
   );

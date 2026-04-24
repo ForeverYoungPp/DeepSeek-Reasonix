@@ -170,6 +170,7 @@ function summarizeTurns(turns: TurnStats[]): SessionSummary {
     savingsVsClaudePct: round(savingsVsClaude * 100, 2),
     cacheHitRatio: round(cacheHitRatio, 4),
     lastPromptTokens: lastTurn?.usage.promptTokens ?? 0,
+    lastTurnCostUsd: round(lastTurn?.cost ?? 0, 6),
   };
 }
 

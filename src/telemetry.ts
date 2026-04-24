@@ -123,6 +123,13 @@ export interface SessionSummary {
    * prompt + user delta + any new tool outputs).
    */
   lastPromptTokens: number;
+  /**
+   * Most recent turn's USD cost. Complements `totalCostUsd` so the TUI
+   * can render "this turn: $X · session: $Y" — users asked for a
+   * per-turn signal so a mid-session jump from flash to pro is
+   * immediately visible, not hidden inside the session aggregate.
+   */
+  lastTurnCostUsd: number;
 }
 
 export class SessionStats {
@@ -184,6 +191,7 @@ export class SessionStats {
       savingsVsClaudePct: round(this.savingsVsClaude * 100, 2),
       cacheHitRatio: round(this.aggregateCacheHitRatio, 4),
       lastPromptTokens: last?.usage.promptTokens ?? 0,
+      lastTurnCostUsd: round(last?.cost ?? 0, 6),
     };
   }
 }

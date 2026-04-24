@@ -59,6 +59,7 @@ export function ReplayApp({ meta, pages }: ReplayAppProps) {
     cacheHitRatio: cumStats.cacheHitRatio,
     // Replay is read-only — no live last-turn prompt tokens to show.
     lastPromptTokens: 0,
+    lastTurnCostUsd: 0,
   };
 
   const prefixHash =

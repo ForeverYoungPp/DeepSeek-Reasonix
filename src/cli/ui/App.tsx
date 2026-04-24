@@ -282,6 +282,14 @@ export function App({
   // `/plan` slash and PlanConfirm picker. Ephemeral — not persisted
   // across launches (you explicitly opt in per session).
   const [planMode, setPlanMode] = useState<boolean>(false);
+  // /pro armed — next turn will run on v4-pro. Mirrored here (rather
+  // than reading loop.proArmed directly) so state transitions trigger
+  // a StatsPanel re-render that picks up the new badge.
+  const [proArmed, setProArmed] = useState(false);
+  // True while the CURRENT running turn is on v4-pro because of either
+  // /pro arming or auto-escalation. Set on turn-start if armed consumed
+  // OR any "⇧ pro" warning fires, cleared at turn-end.
+  const [turnOnPro, setTurnOnPro] = useState(false);
   // Text waiting to be submitted AFTER the current turn finishes.
   // Set by ShellConfirm's onChoose when the user approves faster than
   // the model's "awaiting confirmation" response. We can't call
@@ -315,6 +323,7 @@ export function App({
     savingsVsClaudePct: 0,
     cacheHitRatio: 0,
     lastPromptTokens: 0,
+    lastTurnCostUsd: 0,
   });
 
   const transcriptRef = useRef<WriteStream | null>(null);
@@ -1046,6 +1055,14 @@ export function App({
           clearPendingPlan: codeMode ? clearPendingPlan : undefined,
           editMode: codeMode ? editMode : undefined,
           setEditMode: codeMode ? setEditMode : undefined,
+          armPro: () => {
+            loop.armProForNextTurn();
+            setProArmed(true);
+          },
+          disarmPro: () => {
+            loop.disarmPro();
+            setProArmed(false);
+          },
           jobs: codeMode?.jobs,
           postInfo: (text: string) =>
             setHistorical((prev) => [
@@ -1194,6 +1211,17 @@ export function App({
       // previous turn doesn't carry over silently. User expects each
       // new prompt to start with the normal review gate re-armed.
       turnEditPolicyRef.current = "ask";
+      // Pro badge state: if /pro was armed, this turn consumes it; the
+      // loop emits a "⇧ /pro armed" warning we'll catch below. Clear
+      // the armed mirror so the badge flips to "escalated" (via the
+      // warning handler) rather than staying at "armed" during the
+      // actual run.
+      if (proArmed) {
+        setProArmed(false);
+        setTurnOnPro(true);
+      } else {
+        setTurnOnPro(false);
+      }
 
       const flush = () => {
         if (!contentBuf.current && !reasoningBuf.current && !toolCallBuildBuf.current) return;
@@ -1485,6 +1513,12 @@ export function App({
               ...prev,
               { id: `w-${Date.now()}-${Math.random()}`, role: "warning", text: ev.content },
             ]);
+            // The loop emits warnings starting with "⇧" whenever this
+            // turn is (or just became) running on pro — either the
+            // /pro armed state was consumed at turn start, or the
+            // failure threshold tripped mid-turn. Flip the badge so
+            // the user sees the escalation in the header.
+            if (ev.content?.startsWith("⇧ ")) setTurnOnPro(true);
           }
         }
         flush();
@@ -1523,6 +1557,9 @@ export function App({
         setStatusLine(null);
         setSummary(loop.stats.summary());
         setBusy(false);
+        // Clear pro-on-turn badge; armed-for-next-turn already cleared
+        // at turn start when it was consumed.
+        setTurnOnPro(false);
         // Refresh balance lazily — don't block the return.
         refreshBalance();
       }
@@ -1566,6 +1603,7 @@ export function App({
       refreshBalance,
       refreshLatestVersion,
       refreshModels,
+      proArmed,
     ],
   );
 
@@ -1840,6 +1878,8 @@ export function App({
           balance={balance}
           busy={busy}
           updateAvailable={updateAvailable}
+          proArmed={proArmed}
+          escalated={turnOnPro}
         />
         <Static items={historical}>
           {(item) => <EventRow key={item.id} event={item} projectRoot={hookCwd} />}

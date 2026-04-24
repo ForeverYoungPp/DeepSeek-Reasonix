@@ -148,13 +148,14 @@ const effort: SlashHandler = (args, loop) => {
   return { info: `reasoning_effort → ${raw} (persisted)` };
 };
 
-const pro: SlashHandler = (args, loop) => {
+const pro: SlashHandler = (args, loop, ctx) => {
   const arg = (args[0] ?? "").toLowerCase();
   if (arg === "off" || arg === "cancel" || arg === "disarm") {
     if (!loop.proArmed) {
       return { info: "nothing armed — /pro with no args will arm pro for your next turn" };
     }
-    loop.disarmPro();
+    if (ctx.disarmPro) ctx.disarmPro();
+    else loop.disarmPro();
     return { info: "▸ /pro disarmed — next turn falls back to the current preset" };
   }
   if (arg && arg !== "on" && arg !== "arm") {
@@ -162,7 +163,8 @@ const pro: SlashHandler = (args, loop) => {
       info: "usage: /pro       arm pro for the next turn (one-shot, auto-disarms after)\n       /pro off  cancel armed state before the next turn",
     };
   }
-  loop.armProForNextTurn();
+  if (ctx.armPro) ctx.armPro();
+  else loop.armProForNextTurn();
   return {
     info: `▸ /pro armed — your NEXT message runs on ${ESCALATION_MODEL_ID} regardless of preset. Auto-disarms after one turn. Use /preset max for a persistent switch.`,
   };

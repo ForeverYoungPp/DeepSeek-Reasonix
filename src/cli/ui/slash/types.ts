@@ -180,6 +180,16 @@ export interface SlashContext {
    * after a flaky first fetch without needing async slash support.
    */
   refreshModels?: () => void;
+  /**
+   * Arm pro for the next turn. Called by `/pro`. The TUI wires this
+   * to both `loop.armProForNextTurn()` and its React mirror state so
+   * the StatsPanel badge flips immediately. Absent → the handler
+   * calls `loop.armProForNextTurn()` directly and the badge updates
+   * on the next render tick (slightly laggy but still correct).
+   */
+  armPro?: () => void;
+  /** Cancel a pending /pro arming. Mirrors `armPro` semantics. */
+  disarmPro?: () => void;
 }
 
 export interface McpServerSummary {
