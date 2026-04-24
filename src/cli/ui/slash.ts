@@ -244,6 +244,12 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { cmd: "new", summary: "start a fresh conversation (clear context + scrollback)" },
   { cmd: "exit", summary: "quit the TUI" },
   // Code-mode only
+  {
+    cmd: "edit",
+    argsHint: "<file> <instruction>",
+    summary: "one-shot surgical edit — inlines <file>, asks model for a SEARCH/REPLACE block",
+    contextual: "code",
+  },
   { cmd: "apply", summary: "commit pending edit blocks to disk", contextual: "code" },
   { cmd: "discard", summary: "drop pending edit blocks without writing", contextual: "code" },
   { cmd: "undo", summary: "roll back the last applied edit batch", contextual: "code" },
@@ -337,6 +343,7 @@ export function handleSlash(
           "  /skill [sub]             list / run user skills (project/.reasonix/skills + ~/.reasonix/skills).",
           "                            subs: list | show <name> | <name> [args] (injects skill body as user turn)",
           "  /retry                   truncate & resend your last message (fresh sample from the model)",
+          '  /edit <file> "instruction"  (code mode) one-shot surgical edit — inlines <file>, asks for SEARCH/REPLACE',
           "  /apply                   (code mode) commit the pending edit blocks to disk",
           "  /discard                 (code mode) drop pending edits without writing",
           "  /undo                    (code mode) roll back the last applied edit batch",
@@ -519,6 +526,38 @@ export function handleSlash(
         };
       }
       return { info: ctx.codeUndo() };
+    }
+
+    case "edit": {
+      // One-shot surgical edit. We re-express the user's intent as
+      //     @<file> <instruction>
+      //     Output ONLY a SEARCH/REPLACE block for this one edit.
+      // and feed it through the normal turn machinery. `@` expansion
+      // (0.5.5) inlines the file content under a `[Referenced files]`
+      // block, the model returns a SEARCH/REPLACE block, the code-mode
+      // loop catches it into pendingEdits, and the existing y/n gate
+      // fires. Zero new code path — the slash is sugar over the stuff
+      // that already works.
+      if (!ctx.codeRoot) {
+        return {
+          info: "/edit only works in code mode. Start Reasonix with `reasonix code <dir>` so filesystem tools and SEARCH/REPLACE handling are active.",
+        };
+      }
+      const filePath = args[0];
+      if (!filePath) {
+        return {
+          info: 'usage: /edit <file> <instruction>   e.g. /edit src/loop.ts "add a comment above the compact() method"',
+        };
+      }
+      const instruction = args.slice(1).join(" ").trim();
+      if (!instruction) {
+        return {
+          info: `usage: /edit <file> <instruction>   — missing instruction for "${filePath}".`,
+        };
+      }
+      return {
+        resubmit: `@${filePath} ${instruction}\n\nOutput ONLY a SEARCH/REPLACE block for this one edit. No prose, no explanation.`,
+      };
     }
 
     case "apply": {

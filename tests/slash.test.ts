@@ -500,6 +500,52 @@ describe("handleSlash", () => {
     expect(r.info).toMatch(/\/tool/);
   });
 
+  describe("/edit", () => {
+    it("refuses outside code mode", () => {
+      const r = handleSlash("edit", ["src/foo.ts", "change", "x"], makeLoop(), {});
+      expect(r.info).toMatch(/only works in code mode/);
+      expect(r.resubmit).toBeUndefined();
+    });
+
+    it("shows usage when file path is missing", () => {
+      const r = handleSlash("edit", [], makeLoop(), { codeRoot: "/repo" });
+      expect(r.info).toMatch(/usage: \/edit/);
+      expect(r.resubmit).toBeUndefined();
+    });
+
+    it("shows usage when instruction is missing", () => {
+      const r = handleSlash("edit", ["src/foo.ts"], makeLoop(), { codeRoot: "/repo" });
+      expect(r.info).toMatch(/missing instruction/);
+      expect(r.resubmit).toBeUndefined();
+    });
+
+    it("resubmits as @file + strict SEARCH/REPLACE instruction", () => {
+      const r = handleSlash("edit", ["src/foo.ts", "fix", "the", "typo"], makeLoop(), {
+        codeRoot: "/repo",
+      });
+      expect(r.resubmit).toBeDefined();
+      expect(r.resubmit!).toContain("@src/foo.ts");
+      expect(r.resubmit!).toContain("fix the typo");
+      expect(r.resubmit!).toMatch(/SEARCH\/REPLACE/);
+      expect(r.resubmit!).toMatch(/ONLY/);
+    });
+
+    it("preserves multi-word instructions verbatim", () => {
+      const r = handleSlash(
+        "edit",
+        ["README.md", "add", "a", "section", "on", "installation"],
+        makeLoop(),
+        { codeRoot: "/repo" },
+      );
+      expect(r.resubmit!).toContain("add a section on installation");
+    });
+  });
+
+  it("/help mentions /edit", () => {
+    const r = handleSlash("help", [], makeLoop());
+    expect(r.info).toMatch(/\/edit/);
+  });
+
   it("SLASH_COMMANDS registry contains every handler switch case", () => {
     // Spot-check a handful so the registry doesn't silently drift
     // from `handleSlash`. If a new case lands in handleSlash, it
@@ -527,6 +573,7 @@ describe("handleSlash", () => {
       "commit",
       "plan",
       "apply-plan",
+      "edit",
     ]) {
       expect(names, `registry missing /${required}`).toContain(required);
     }
