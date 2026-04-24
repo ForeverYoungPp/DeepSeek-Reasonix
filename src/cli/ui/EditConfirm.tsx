@@ -158,13 +158,18 @@ export function EditConfirm({ block, onChoose }: EditConfirmProps) {
         </Text>
       </Box>
       {hiddenAbove > 0 ? (
-        <Text dimColor>{`  ↑ ${hiddenAbove} line${hiddenAbove === 1 ? "" : "s"} above  (↑/k or PgUp)`}</Text>
+        <Text
+          dimColor
+        >{`  ↑ ${hiddenAbove} line${hiddenAbove === 1 ? "" : "s"} above  (↑/k or PgUp)`}</Text>
       ) : null}
       <Box marginTop={hiddenAbove > 0 ? 0 : 1} flexDirection="column">
         {visibleLines.map((line, i) => {
           const trimmed = line.trimStart();
-          const color =
-            trimmed.startsWith("+") ? "green" : trimmed.startsWith("-") ? "red" : undefined;
+          const color = trimmed.startsWith("+")
+            ? "green"
+            : trimmed.startsWith("-")
+              ? "red"
+              : undefined;
           const dim = !color;
           return (
             <Text
@@ -181,7 +186,9 @@ export function EditConfirm({ block, onChoose }: EditConfirmProps) {
         })}
       </Box>
       {hiddenBelow > 0 ? (
-        <Text dimColor>{`  ↓ ${hiddenBelow} line${hiddenBelow === 1 ? "" : "s"} below  (↓/j or Space/PgDn)`}</Text>
+        <Text
+          dimColor
+        >{`  ↓ ${hiddenBelow} line${hiddenBelow === 1 ? "" : "s"} below  (↓/j or Space/PgDn)`}</Text>
       ) : null}
       <Box marginTop={1}>
         <Text dimColor>

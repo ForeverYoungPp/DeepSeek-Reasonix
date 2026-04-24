@@ -193,7 +193,13 @@ describe("ToolRegistry", () => {
     it("short-circuits dispatch when interceptor returns a string", async () => {
       const reg = new ToolRegistry();
       let fnCalled = false;
-      reg.register({ name: "edit_file", fn: () => ((fnCalled = true), "should not run") });
+      reg.register({
+        name: "edit_file",
+        fn: () => {
+          fnCalled = true;
+          return "should not run";
+        },
+      });
       reg.setToolInterceptor((name) => (name === "edit_file" ? "queued" : null));
       const out = await reg.dispatch("edit_file", '{"path":"foo"}');
       expect(out).toBe("queued");
@@ -232,7 +238,10 @@ describe("ToolRegistry", () => {
       const reg = new ToolRegistry();
       let interceptorCalled = false;
       reg.register({ name: "edit_file", fn: () => "ok" });
-      reg.setToolInterceptor(() => ((interceptorCalled = true), "queued"));
+      reg.setToolInterceptor(() => {
+        interceptorCalled = true;
+        return "queued";
+      });
       reg.setPlanMode(true);
       const out = await reg.dispatch("edit_file", '{"path":"x"}');
       expect(JSON.parse(out).error).toMatch(/unavailable in plan mode/);

@@ -48,8 +48,8 @@ import { openTranscriptFile, recordFromLoopEvent, writeRecord } from "../../tran
 import { appendUsage } from "../../usage.js";
 import { VERSION, compareVersions, getLatestVersion } from "../../version.js";
 import { AtMentionSuggestions } from "./AtMentionSuggestions.js";
-import { type DisplayEvent, EventRow } from "./EventLog.js";
 import { EditConfirm, type EditReviewChoice } from "./EditConfirm.js";
+import { type DisplayEvent, EventRow } from "./EventLog.js";
 import { PlanConfirm, type PlanConfirmChoice } from "./PlanConfirm.js";
 import { PlanRefineInput } from "./PlanRefineInput.js";
 import { PromptInput } from "./PromptInput.js";
@@ -296,9 +296,7 @@ export function App({
   // `auto` applies them immediately and exposes an undo banner. Shift+
   // Tab cycles, `/mode <review|auto>` sets explicitly. Persisted so
   // toggling once survives a relaunch.
-  const [editMode, setEditMode] = useState<EditMode>(() =>
-    codeMode ? loadEditMode() : "review",
-  );
+  const [editMode, setEditMode] = useState<EditMode>(() => (codeMode ? loadEditMode() : "review"));
   // Interceptor closure reads the live mode through this ref — so we
   // install the registry hook once (in useEffect below) and avoid tearing
   // down + reattaching it every time the user cycles modes.
@@ -957,10 +955,7 @@ export function App({
       (undoBanner || editHistory.current.some((e) => !isEntryFullyUndone(e)))
     ) {
       const out = codeUndo([]);
-      setHistorical((prev) => [
-        ...prev,
-        { id: `undo-${Date.now()}`, role: "info", text: out },
-      ]);
+      setHistorical((prev) => [...prev, { id: `undo-${Date.now()}`, role: "info", text: out }]);
       return;
     }
     if (busy) return;
@@ -1155,9 +1150,7 @@ export function App({
         for (let i = editHistory.current.length - 1; i >= 0; i--) {
           const e = editHistory.current[i]!;
           if (isEntryFullyUndone(e)) continue;
-          const remaining = e.snapshots
-            .map((s) => s.path)
-            .filter((p) => !e.undoneFiles.has(p));
+          const remaining = e.snapshots.map((s) => s.path).filter((p) => !e.undoneFiles.has(p));
           return revert(e, remaining);
         }
         return "nothing to undo — every batch in the session history is already undone";
@@ -1266,7 +1259,7 @@ export function App({
         const header = `▸ edit #${entry.id} · ${when} · ${pathArg} · ${state} · ${fileBlocks.length} block(s)`;
         const diff = formatAllBlockDiffs(fileBlocks, { maxLines: 60, contextLines: 2 });
         const footer = entry.undoneFiles.has(pathArg)
-          ? `(already reverted — /history shows the batch-level status)`
+          ? "(already reverted — /history shows the batch-level status)"
           : `/undo ${entry.id} ${pathArg}  → revert just this file`;
         return [header, ...diff, "", footer].join("\n");
       }
@@ -1309,6 +1302,8 @@ export function App({
   // `editModeRef` is read inside the closure so mode cycles don't need
   // to reinstall the hook. Cleanup clears the slot on unmount so a
   // follow-up App instance (tests, HMR) starts with a fresh registry.
+  //
+  // biome-ignore lint/correctness/useExhaustiveDependencies: session / setEditMode / syncPendingCount are intentional closure captures — their updaters are stable and we don't want to tear down and rebuild the interceptor on unrelated state churn
   useEffect(() => {
     if (!tools || !codeMode) return;
     tools.setToolInterceptor(async (name, args) => {
@@ -2140,7 +2135,9 @@ export function App({
       clearPendingPlan,
       codeApply,
       codeDiscard,
+      codeHistory,
       codeMode,
+      codeShowEdit,
       codeUndo,
       exit,
       hookCwd,
@@ -2213,7 +2210,8 @@ export function App({
           {
             id: `sh-run-${Date.now()}`,
             role: "info",
-            text: kind === "run_background" ? `▸ starting (background): ${cmd}` : `▸ running: ${cmd}`,
+            text:
+              kind === "run_background" ? `▸ starting (background): ${cmd}` : `▸ running: ${cmd}`,
           },
         ]);
         if (kind === "run_background" && codeMode.jobs) {
@@ -2663,7 +2661,9 @@ function ModeStatusBar({
         <Text color="red" bold inverse={flash}>
           {"▸ PLAN"}
         </Text>
-        <Text dimColor>{"  writes gated — submit_plan + approval required  ·  /plan off to leave"}</Text>
+        <Text dimColor>
+          {"  writes gated — submit_plan + approval required  ·  /plan off to leave"}
+        </Text>
         {jobsTag}
       </Box>
     );
@@ -2705,16 +2705,18 @@ function UndoBanner({
   useTick();
   const remainingMs = Math.max(0, banner.expiresAt - Date.now());
   const remainingSec = Math.ceil(remainingMs / 1000);
-  const ok = banner.results.filter(
-    (r) => r.status === "applied" || r.status === "created",
-  ).length;
+  const ok = banner.results.filter((r) => r.status === "applied" || r.status === "created").length;
   const total = banner.results.length;
   return (
     <Box marginY={1} borderStyle="round" borderColor="magenta" paddingX={1}>
-      <Text color="magenta" bold>{"✓ auto-applied "}</Text>
+      <Text color="magenta" bold>
+        {"✓ auto-applied "}
+      </Text>
       <Text color="magenta">{`${ok}/${total} edit${total === 1 ? "" : "s"}`}</Text>
       <Text dimColor>{" · press "}</Text>
-      <Text color="magenta" bold>{"u"}</Text>
+      <Text color="magenta" bold>
+        {"u"}
+      </Text>
       <Text dimColor>{" to undo  ("}</Text>
       <Text color={remainingSec <= 1 ? "red" : "magenta"}>{`${remainingSec}s`}</Text>
       <Text dimColor>{")"}</Text>

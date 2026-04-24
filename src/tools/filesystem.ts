@@ -374,9 +374,7 @@ Prefer \`list_directory\` for a single-level view, \`search_files\` to find spec
           }
           const indent = "  ".repeat(depth);
           const suffix = skip ? " (skipped — pass include_deps:true to traverse)" : "";
-          const line = e.isDirectory()
-            ? `${indent}${e.name}/${suffix}`
-            : `${indent}${e.name}`;
+          const line = e.isDirectory() ? `${indent}${e.name}/${suffix}` : `${indent}${e.name}`;
           totalBytes += line.length + 1;
           if (totalBytes > maxListBytes) {
             lines.push(`  [… tree truncated at ${maxListBytes} bytes …]`);

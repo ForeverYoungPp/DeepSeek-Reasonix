@@ -161,11 +161,7 @@ export function applyEditBlocks(blocks: EditBlock[], rootDir: string): ApplyResu
  * `write_file` tool call through the review queue without executing
  * the write inline.
  */
-export function toWholeFileEditBlock(
-  path: string,
-  content: string,
-  rootDir: string,
-): EditBlock {
+export function toWholeFileEditBlock(path: string, content: string, rootDir: string): EditBlock {
   const abs = resolve(rootDir, path);
   let search = "";
   if (existsSync(abs)) {

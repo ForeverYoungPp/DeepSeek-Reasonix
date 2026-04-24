@@ -690,7 +690,8 @@ export function registerShellTools(registry: ToolRegistry, opts: ShellToolsOptio
         jobId: { type: "integer", description: "Job id returned by run_background." },
         since: {
           type: "integer",
-          description: "Return only output written past this byte offset (for incremental polling).",
+          description:
+            "Return only output written past this byte offset (for incremental polling).",
         },
         tailLines: {
           type: "integer",
@@ -765,7 +766,9 @@ function formatJobRead(jobId: number, r: import("./jobs.js").JobReadResult): str
 }
 
 function formatJobStop(r: import("./jobs.js").JobRecord): string {
-  const running = r.running ? "still running (SIGKILL may be pending)" : `exit ${r.exitCode ?? "?"}`;
+  const running = r.running
+    ? "still running (SIGKILL may be pending)"
+    : `exit ${r.exitCode ?? "?"}`;
   const tail = tailLines(r.output, 40);
   const header = `[job ${r.id} stopped · ${running}]\n$ ${r.command}`;
   return tail ? `${header}\n${tail}` : header;
@@ -778,7 +781,7 @@ function formatJobRow(r: import("./jobs.js").JobRecord): string {
     : r.exitCode !== null
       ? `exit ${r.exitCode}`
       : r.spawnError
-        ? `failed`
+        ? "failed"
         : "stopped";
   return `  ${String(r.id).padStart(3)}  ${state.padEnd(24)}  ${age}s ago   $ ${r.command}`;
 }

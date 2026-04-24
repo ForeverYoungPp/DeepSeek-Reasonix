@@ -7,7 +7,6 @@ import {
   globalSettingsPath,
   projectSettingsPath,
 } from "../../hooks.js";
-import type { JobRegistry } from "../../tools/jobs.js";
 import type { CacheFirstLoop } from "../../loop.js";
 import type { McpClient } from "../../mcp/client.js";
 import type { InspectionReport } from "../../mcp/inspect.js";
@@ -16,6 +15,7 @@ import { deleteSession, listSessions } from "../../session.js";
 import { SkillStore } from "../../skills.js";
 import { DEEPSEEK_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS } from "../../telemetry.js";
 import { countTokens } from "../../tokenizer.js";
+import type { JobRegistry } from "../../tools/jobs.js";
 import { aggregateUsage, defaultUsageLogPath, readUsageLog } from "../../usage.js";
 import { type MemoryScope, MemoryStore } from "../../user-memory.js";
 import { VERSION, compareVersions, isNpxInstall } from "../../version.js";

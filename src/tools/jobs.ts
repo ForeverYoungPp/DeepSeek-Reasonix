@@ -359,10 +359,7 @@ export class JobRegistry {
       }
     }
     // Wait for the close event or graceMs, then SIGKILL.
-    await Promise.race([
-      job.readyPromise,
-      new Promise<void>((res) => setTimeout(res, graceMs)),
-    ]);
+    await Promise.race([job.readyPromise, new Promise<void>((res) => setTimeout(res, graceMs))]);
     if (job.running) {
       if (job.pid !== null) {
         killProcessTree(job.pid, "SIGKILL");
@@ -410,10 +407,7 @@ export class JobRegistry {
     // half the deadline so we always leave room for a SIGKILL pass +
     // reap confirmation.
     const graceMs = Math.min(1500, Math.max(0, deadlineMs / 2));
-    await Promise.race([
-      allClose,
-      new Promise<void>((res) => setTimeout(res, graceMs)),
-    ]);
+    await Promise.race([allClose, new Promise<void>((res) => setTimeout(res, graceMs))]);
     // Force-kill everything still alive.
     for (const job of runningJobs) {
       if (!job.running) continue;
@@ -430,10 +424,7 @@ export class JobRegistry {
     // grandchildren are still mid-teardown, which is what "runningCount
     // non-zero after shutdown" looks like.
     const remaining = Math.max(800, deadlineMs - elapsed());
-    await Promise.race([
-      allClose,
-      new Promise<void>((res) => setTimeout(res, remaining)),
-    ]);
+    await Promise.race([allClose, new Promise<void>((res) => setTimeout(res, remaining))]);
   }
 
   /** Count of still-running jobs — drives the TUI status-bar indicator. */

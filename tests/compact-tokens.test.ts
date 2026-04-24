@@ -129,9 +129,7 @@ describe("shrinkOversizedToolCallArgsByTokens", () => {
 
   it("leaves tool results intact (only targets assistant.tool_calls args)", () => {
     const hugeResult = "log line ".repeat(2000);
-    const msgs: ChatMessage[] = [
-      { role: "tool", tool_call_id: "c1", content: hugeResult },
-    ];
+    const msgs: ChatMessage[] = [{ role: "tool", tool_call_id: "c1", content: hugeResult }];
     const r = shrinkOversizedToolCallArgsByTokens(msgs, 100);
     expect(r.healedCount).toBe(0);
     expect(r.messages[0]!.content).toBe(hugeResult);
