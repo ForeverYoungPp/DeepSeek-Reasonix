@@ -1199,13 +1199,21 @@ export class CacheFirstLoop {
         content:
           "I'm out of tool-call budget for this turn. Summarize in plain prose what you learned from the tool results above. Do NOT emit any tool calls, function-call markup, DSML invocations, or SEARCH/REPLACE edit blocks — they will be silently discarded. Just plain text.",
       });
+      // Cost optimization: the forced summary is a wrap-up of work
+      // already done, not fresh reasoning. Pin it to flash with
+      // effort=high regardless of the main turn's model — pro is
+      // 12× overkill for "paraphrase these tool results into prose."
+      // Budget-exhausted turns are exactly when we DON'T want to
+      // also torch the wallet.
+      const summaryModel = "deepseek-v4-flash";
+      const summaryEffort: "high" | "max" = "high";
       const resp = await this.client.chat({
-        model: this.model,
+        model: summaryModel,
         messages,
         // no tools → model is forced to answer in text
         signal: this._turnAbort.signal,
-        thinking: thinkingModeForModel(this.model),
-        reasoningEffort: this.reasoningEffort,
+        thinking: thinkingModeForModel(summaryModel),
+        reasoningEffort: summaryEffort,
       });
       const rawContent = resp.content?.trim() ?? "";
       const cleaned = stripHallucinatedToolMarkup(rawContent);
@@ -1214,7 +1222,9 @@ export class CacheFirstLoop {
         "(model emitted fake tool-call markup instead of a prose summary — try /retry with a narrower question, or /think to inspect R1's reasoning)";
       const reasonPrefix = reasonPrefixFor(opts.reason, this.maxToolIters);
       const annotated = `${reasonPrefix}\n\n${summary}`;
-      const summaryStats = this.stats.record(this._turn, this.model, resp.usage ?? new Usage());
+      // Record under the actual model used (flash), not `this.model`,
+      // so per-turn cost and `/stats` reflect reality.
+      const summaryStats = this.stats.record(this._turn, summaryModel, resp.usage ?? new Usage());
       this.appendAndPersist(this.assistantMessage(summary, [], resp.reasoningContent ?? undefined));
       yield {
         turn: this._turn,

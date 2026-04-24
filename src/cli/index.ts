@@ -68,16 +68,16 @@ program
 program
   .command("code [dir]")
   .description(
-    "Code-editing chat — filesystem tools rooted at <dir> (default: cwd), coding system prompt, deepseek-reasoner. Model proposes SEARCH/REPLACE blocks; Reasonix applies them to disk.",
+    "Code-editing chat — filesystem tools rooted at <dir> (default: cwd), coding system prompt, v4-flash. Model proposes SEARCH/REPLACE blocks; Reasonix applies them to disk. Use /preset max or /pro to escalate to v4-pro on hard tasks.",
   )
-  .option("-m, --model <id>", "Override default reasoner model")
+  .option("-m, --model <id>", "Override default model (v4-flash)")
   .option("--no-session", "Disable session persistence for this run")
   .option("-r, --resume", "Skip the session picker — always continue prior messages")
   .option("-n, --new", "Skip the session picker — always wipe prior messages and start fresh")
   .option("--transcript <path>", "Write a JSONL transcript to this path")
   .option(
     "--harvest",
-    "Extract typed plan state from R1 reasoning (Pillar 2). Adds ~10-15% cost per turn. Off by default in code mode.",
+    "Opt-in Pillar-2 plan-state extraction. Adds one flash call per turn; off by default (no preset enables it).",
   )
   .action(async (dir: string | undefined, opts) => {
     await codeCommand({
@@ -99,15 +99,15 @@ program
   .option("--transcript <path>", "Write a JSONL transcript to this path")
   .option(
     "--preset <name>",
-    "Bundle of model + harvest + branch. One of: fast, smart, max. Overrides config.preset.",
+    "Model + effort bundle. One of: fast (flash·high), smart (flash·max, default), max (pro·max). Overrides config.preset.",
   )
   .option(
     "--harvest",
-    "Extract typed plan state from R1 reasoning (Pillar 2). Overrides preset's harvest setting.",
+    "Opt-in Pillar-2 plan-state extraction. Off by default — no preset enables it.",
   )
   .option(
     "--branch <n>",
-    "Self-consistency: run N parallel samples per turn and pick the most confident (disables streaming; enables harvest)",
+    "Self-consistency: run N parallel samples per turn (N× cost). Manual only — never auto-enabled.",
     (v) => Number.parseInt(v, 10),
   )
   .option("--session <name>", "Use a named session (default: from config, usually 'default').")

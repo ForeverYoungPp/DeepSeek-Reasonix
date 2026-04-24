@@ -198,7 +198,16 @@ ${TUI_FORMATTING_RULES}`;
 
 const DEFAULT_MAX_RESULT_CHARS = 8000;
 const DEFAULT_MAX_ITERS = 16;
-const DEFAULT_SUBAGENT_MODEL = "deepseek-v4-pro";
+// Subagents default to flash — their work is read-and-synthesize
+// (explore, research), which doesn't need the 12× pro tier. Skill
+// frontmatter `model: deepseek-v4-pro` is the opt-in override for
+// skills that empirically benefit from the stronger model.
+const DEFAULT_SUBAGENT_MODEL = "deepseek-v4-flash";
+// Subagents default to effort=high — less thinking budget than a
+// main turn (which defaults to `max` in the preset). The parent's
+// task arg is already a distilled prompt; explore/research rarely
+// need deep chains of thought, and `high` saves output tokens.
+const DEFAULT_SUBAGENT_EFFORT: "high" | "max" = "high";
 
 const SUBAGENT_TOOL_NAME = "spawn_subagent";
 /**
@@ -248,6 +257,10 @@ export async function spawnSubagent(opts: SpawnSubagentOptions): Promise<Subagen
     prefix: childPrefix,
     tools: childTools,
     model,
+    // Subagents run on a constrained thinking budget by default — the
+    // task is already narrow by construction, and `high` cuts output
+    // tokens substantially vs `max`.
+    reasoningEffort: DEFAULT_SUBAGENT_EFFORT,
     maxToolIters,
     hooks: [],
     stream: false,

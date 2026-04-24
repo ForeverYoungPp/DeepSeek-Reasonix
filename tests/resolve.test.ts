@@ -42,36 +42,42 @@ describe("resolveDefaults", () => {
     }
   });
 
-  it("empty flags + empty config → hard-coded fast preset", () => {
+  it("empty flags + empty config → hard-coded smart preset (flash + max)", () => {
     const r = resolveDefaults({});
-    expect(r.model).toBe("deepseek-chat");
+    expect(r.model).toBe("deepseek-v4-flash");
+    expect(r.reasoningEffort).toBe("max");
     expect(r.harvest).toBe(false);
     expect(r.branch).toBeUndefined();
     expect(r.mcp).toEqual([]);
     expect(r.session).toBe("default");
   });
 
-  it("config.preset 'smart' flips harvest on and switches model", () => {
-    writeConfig({ preset: "smart" }, join(home, ".reasonix", "config.json"));
+  it("config.preset 'fast' drops effort to high (still flash, no harvest)", () => {
+    writeConfig({ preset: "fast" }, join(home, ".reasonix", "config.json"));
     const r = resolveDefaults({});
-    expect(r.model).toBe("deepseek-reasoner");
-    expect(r.harvest).toBe(true);
+    expect(r.model).toBe("deepseek-v4-flash");
+    expect(r.reasoningEffort).toBe("high");
+    expect(r.harvest).toBe(false);
     expect(r.branch).toBeUndefined();
   });
 
-  it("--preset max overrides config.preset=fast", () => {
+  it("--preset max overrides config.preset=fast → pro + max, no branch", () => {
     writeConfig({ preset: "fast" }, join(home, ".reasonix", "config.json"));
     const r = resolveDefaults({ preset: "max" });
     expect(r.model).toBe("deepseek-v4-pro");
-    expect(r.branch).toBe(3);
+    expect(r.reasoningEffort).toBe("max");
+    expect(r.harvest).toBe(false);
+    // branch is NEVER part of a preset — only /branch or --branch turns it on.
+    expect(r.branch).toBeUndefined();
   });
 
   it("--model wins even when --preset is set", () => {
-    const r = resolveDefaults({ preset: "max", model: "deepseek-chat" });
-    expect(r.model).toBe("deepseek-chat");
-    // preset still controls harvest/branch
-    expect(r.harvest).toBe(true);
-    expect(r.branch).toBe(3);
+    const r = resolveDefaults({ preset: "max", model: "deepseek-v4-flash" });
+    expect(r.model).toBe("deepseek-v4-flash");
+    // preset still controls effort/harvest/branch
+    expect(r.reasoningEffort).toBe("max");
+    expect(r.harvest).toBe(false);
+    expect(r.branch).toBeUndefined();
   });
 
   it("--mcp overrides config.mcp wholesale (no merging)", () => {
@@ -96,7 +102,8 @@ describe("resolveDefaults", () => {
   it("--no-config ignores the config entirely", () => {
     writeConfig({ preset: "max", mcp: ["x=cmd"] }, join(home, ".reasonix", "config.json"));
     const r = resolveDefaults({ noConfig: true });
-    expect(r.model).toBe("deepseek-chat"); // fast defaults
+    expect(r.model).toBe("deepseek-v4-flash"); // smart defaults (new default)
+    expect(r.reasoningEffort).toBe("max");
     expect(r.mcp).toEqual([]);
   });
 

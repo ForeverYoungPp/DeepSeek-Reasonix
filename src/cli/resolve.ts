@@ -6,7 +6,7 @@
  *   1. Explicit per-setting CLI flag (`--model`, `--harvest`, `--branch`, `--mcp`)
  *   2. Explicit `--preset <name>` CLI flag
  *   3. `config.preset` from `~/.reasonix/config.json` (set by `reasonix setup`)
- *   4. Hardcoded "fast" preset defaults
+ *   4. Hardcoded "smart" preset defaults (flash + effort=max)
  *
  * Keeping this logic in one place — rather than duplicating across
  * `chat` and `run` — means the precedence rule only lives in one unit
@@ -18,6 +18,7 @@ import { PRESETS } from "./ui/presets.js";
 
 export interface ResolvedDefaults {
   model: string;
+  reasoningEffort: "high" | "max";
   harvest: boolean;
   branch: number | undefined;
   mcp: string[];
@@ -44,6 +45,7 @@ export function resolveDefaults(flags: RawCliFlags): ResolvedDefaults {
   const presetSettings = PRESETS[preset];
 
   const model = flags.model ?? presetSettings.model;
+  const reasoningEffort = presetSettings.reasoningEffort;
   const harvest = flags.harvest === true ? true : presetSettings.harvest;
   const branchFromFlag = normalizeBranch(flags.branch);
   const branch = branchFromFlag ?? (presetSettings.branch > 1 ? presetSettings.branch : undefined);
@@ -55,7 +57,7 @@ export function resolveDefaults(flags: RawCliFlags): ResolvedDefaults {
 
   const session = resolveSession(flags.session, cfg.session);
 
-  return { model, harvest, branch, mcp, session };
+  return { model, reasoningEffort, harvest, branch, mcp, session };
 }
 
 function pickPreset(
@@ -64,7 +66,7 @@ function pickPreset(
 ): PresetName {
   if (flagPreset && isPresetName(flagPreset)) return flagPreset;
   if (configPreset) return configPreset;
-  return "fast";
+  return "smart";
 }
 
 function isPresetName(s: string): s is PresetName {

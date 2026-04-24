@@ -297,31 +297,35 @@ describe("handleSlash", () => {
     expect(r.info).toMatch(/\/compact/);
   });
 
-  it("/preset fast = deepseek-chat, no harvest, no branch", () => {
+  it("/preset fast = v4-flash + effort=high, no harvest, no branch", () => {
     const loop = makeLoop();
-    handleSlash("model", ["deepseek-reasoner"], loop);
+    handleSlash("model", ["deepseek-v4-pro"], loop);
     handleSlash("harvest", ["on"], loop);
     handleSlash("branch", ["3"], loop);
     handleSlash("preset", ["fast"], loop);
-    expect(loop.model).toBe("deepseek-chat");
+    expect(loop.model).toBe("deepseek-v4-flash");
+    expect(loop.reasoningEffort).toBe("high");
     expect(loop.harvestEnabled).toBe(false);
     expect(loop.branchEnabled).toBe(false);
   });
 
-  it("/preset smart = reasoner + harvest, no branch", () => {
+  it("/preset smart = v4-flash + effort=max, no harvest, no branch", () => {
     const loop = makeLoop();
     handleSlash("preset", ["smart"], loop);
-    expect(loop.model).toBe("deepseek-reasoner");
-    expect(loop.harvestEnabled).toBe(true);
+    expect(loop.model).toBe("deepseek-v4-flash");
+    expect(loop.reasoningEffort).toBe("max");
+    expect(loop.harvestEnabled).toBe(false);
     expect(loop.branchEnabled).toBe(false);
   });
 
-  it("/preset max = reasoner + harvest + branch3", () => {
+  it("/preset max = v4-pro + effort=max, no harvest, no branch", () => {
     const loop = makeLoop();
     handleSlash("preset", ["max"], loop);
-    expect(loop.model).toBe("deepseek-reasoner");
-    expect(loop.harvestEnabled).toBe(true);
-    expect(loop.branchOptions.budget).toBe(3);
+    expect(loop.model).toBe("deepseek-v4-pro");
+    expect(loop.reasoningEffort).toBe("max");
+    expect(loop.harvestEnabled).toBe(false);
+    // Branch is NEVER auto-enabled by a preset — manual /branch only.
+    expect(loop.branchEnabled).toBe(false);
   });
 
   it("/preset with bad name returns usage", () => {
@@ -331,7 +335,7 @@ describe("handleSlash", () => {
 
   it("/help mentions presets", () => {
     const r = handleSlash("help", [], makeLoop());
-    expect(r.info).toMatch(/Presets:/);
+    expect(r.info).toMatch(/Presets/);
     expect(r.info).toMatch(/fast/);
     expect(r.info).toMatch(/smart/);
     expect(r.info).toMatch(/max/);

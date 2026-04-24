@@ -54,23 +54,55 @@ const harvest: SlashHandler = (args, loop) => {
   const arg = (args[0] ?? "").toLowerCase();
   const on = arg === "" ? !loop.harvestEnabled : arg === "on" || arg === "true" || arg === "1";
   loop.configure({ harvest: on });
-  return { info: `harvest → ${loop.harvestEnabled ? "on" : "off"}` };
+  if (loop.harvestEnabled) {
+    return {
+      info: "harvest → on  (Pillar-2 plan-state extraction · +1 cheap flash call per turn · opt-in only; no preset turns it on)",
+    };
+  }
+  return { info: "harvest → off" };
 };
 
 const preset: SlashHandler = (args, loop) => {
   const name = (args[0] ?? "").toLowerCase();
+  // Persist the effort along with the preset change so a relaunch
+  // doesn't revert to the previously-saved /effort value.
+  const applyAndPersist = (effort: "high" | "max") => {
+    try {
+      saveReasoningEffort(effort);
+    } catch {
+      /* disk full / perms — runtime change still took effect */
+    }
+  };
   if (name === "fast" || name === "default") {
-    loop.configure({ model: "deepseek-chat", harvest: false, branch: 1 });
-    return { info: "preset → fast  (deepseek-chat, no harvest, no branch)" };
+    loop.configure({
+      model: "deepseek-v4-flash",
+      reasoningEffort: "high",
+      harvest: false,
+      branch: 1,
+    });
+    applyAndPersist("high");
+    return { info: "preset → fast  (v4-flash · effort=high · cheapest)" };
   }
   if (name === "smart") {
-    loop.configure({ model: "deepseek-reasoner", harvest: true, branch: 1 });
-    return { info: "preset → smart  (reasoner + harvest, ~10x cost vs fast)" };
+    loop.configure({
+      model: "deepseek-v4-flash",
+      reasoningEffort: "max",
+      harvest: false,
+      branch: 1,
+    });
+    applyAndPersist("max");
+    return { info: "preset → smart  (v4-flash · effort=max · default · ~1.5× fast)" };
   }
   if (name === "max" || name === "best") {
-    loop.configure({ model: "deepseek-reasoner", harvest: true, branch: 3 });
+    loop.configure({
+      model: "deepseek-v4-pro",
+      reasoningEffort: "max",
+      harvest: false,
+      branch: 1,
+    });
+    applyAndPersist("max");
     return {
-      info: "preset → max  (reasoner + harvest + branch3, ~30x cost vs fast, slowest)",
+      info: "preset → max  (v4-pro · effort=max · ~12× fast · save for hard tasks, or use /pro for a single-turn bump)",
     };
   }
   return { info: "usage: /preset <fast|smart|max>" };
@@ -90,7 +122,9 @@ const branch: SlashHandler = (args, loop) => {
     return { info: "branch budget capped at 8 to prevent runaway cost" };
   }
   loop.configure({ branch: n });
-  return { info: `branch → ${n}  (harvest auto-enabled; streaming disabled)` };
+  return {
+    info: `branch → ${n}  (runs ${n} parallel samples per turn · ${n}× per-turn cost · streaming disabled · manual only, no preset enables branching)`,
+  };
 };
 
 const effort: SlashHandler = (args, loop) => {

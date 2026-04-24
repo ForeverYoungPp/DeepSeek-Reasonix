@@ -114,7 +114,7 @@ export async function codeCommand(opts: CodeOptions = {}): Promise<void> {
   process.once("exit", sigShutdown);
 
   await chatCommand({
-    model: opts.model ?? "deepseek-v4-pro",
+    model: opts.model ?? "deepseek-v4-flash",
     harvest: opts.harvest ?? false,
     system: codeSystemPrompt(rootDir),
     transcript: opts.transcript,
