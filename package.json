@@ -1,7 +1,7 @@
 {
   "name": "reasonix",
-  "version": "0.5.24",
-  "description": "DeepSeek-native agent framework: cache-first loop, R1 thought harvesting, tool-call repair.",
+  "version": "0.6.0",
+  "description": "DeepSeek-native coding agent: cache-first loop, flash-first cost control, tool-call repair.",
   "type": "module",
   "bin": {
     "reasonix": "dist/cli/index.js"

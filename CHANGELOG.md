@@ -3,6 +3,128 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-04-24
+
+**Headline:** Cost control becomes a first-class pillar. Default flips
+flash-first, `v4-pro` is opt-in, tool results auto-compact between
+turns, and the TUI grows per-turn cost visibility + a `/pro`
+one-shot upgrade. Month-over-month cost on an active coding project
+drops ~6–10× in practice.
+
+### ⚠ Breaking (behavior, not API)
+
+- **Default model is now `deepseek-v4-flash`**, not `deepseek-v4-pro`.
+  `reasonix code`, `reasonix chat`, and subagents all land on flash
+  by default. Users who need the frontier tier:
+  `/preset max`, `/pro`, or `--model deepseek-v4-pro` on CLI.
+- **Preset defaults changed**. None of the three presets auto-enable
+  `branch` or `harvest` anymore — both were hidden multipliers. The
+  new matrix:
+  | preset | model | effort | harvest | branch |
+  |---|---|---|---|---|
+  | fast | v4-flash | high | off | 1 |
+  | smart (default) | v4-flash | max | off | 1 |
+  | max | v4-pro | max | off | 1 |
+  Users who want branching still get it via `/branch N`; users who
+  want harvest still get it via `/harvest on`. Neither is implicit.
+- **Default preset is now `smart` (was `fast`).** Flash + full
+  thinking budget is the best price/quality point for coding.
+- **`deepseek-chat` / `deepseek-reasoner` aliases scheduled for
+  removal.** Still accepted (they map to flash non-thinking /
+  thinking), but every user-facing surface (`/models`, setup wizard,
+  `--help`) now advertises `v4-flash` / `v4-pro` only.
+
+### Added — Cost control (Pillar 4)
+
+- **`/pro` single-turn arming** — queue v4-pro for just the next
+  turn; auto-disarms after. Separate from `/preset max` (persistent)
+  so "this one task is hard" doesn't require a preset round-trip.
+  Status bar shows `⇧ pro armed` in yellow while queued, `⇧ pro
+  escalated` in red while the turn is actually running on pro.
+- **Failure-triggered auto-escalation** — the loop tracks
+  `edit_file` SEARCH-not-found errors + ToolCallRepair fires per
+  turn. 3+ signals flip the rest of the turn to `v4-pro` with a
+  visible warning row. Counter resets at every turn start. No
+  silent cost surprises.
+- **Model self-report escalation (`<<<NEEDS_PRO>>>`)** — system
+  prompt teaches the model that when a task CLEARLY exceeds flash's
+  capability (complex architecture, subtle correctness, genuine
+  design trade-offs), emit the marker as the first line of its
+  response. The loop aborts that call, retries this turn on pro,
+  one shot. Guarded against infinite retry (pro never self-
+  escalates) and streaming output is buffered so the marker never
+  flickers on-screen before the retry fires.
+- **Turn-end auto-compaction** — every tool result over 3000 tokens
+  gets shrunk to a cap at turn end. Biggest win for long sessions:
+  a 12KB `read_file` output stops re-paying its cost on every
+  future prompt. The proactive in-turn threshold also dropped from
+  60% → 40% so the reactive 80% path rarely fires.
+- **Forced-summary + truncation-repair auxiliary calls hard-route to
+  flash+effort=high** regardless of the main-turn tier. No reason to
+  pay pro rates for "paraphrase these tool results into prose" or
+  "close this truncated JSON."
+- **Subagent default flipped to `v4-flash` + `effort=high`**. Skill
+  frontmatter `model:` / `effort:` remain the per-skill override.
+- **StatsPanel cost badges** — per-turn cost alongside session total.
+  Colored thresholds: turn green under $0.05, yellow $0.05–0.20,
+  red ≥$0.20; session same scale ×10.
+
+### Added — UX
+
+- **Plan body now flows into scrollback**, not inside the modal.
+  `submit_plan` pushes a dedicated `role: "plan"` row into the
+  Static log (rendered via the full markdown pipeline, never
+  truncated); the PlanConfirm modal below shrinks to a tight
+  approve/refine/cancel picker. Long plans are fully readable via
+  terminal scrollback.
+- **Shared prompt fragments** — `TUI_FORMATTING_RULES` and
+  `NEGATIVE_CLAIM_RULE` live once in `src/prompt-fragments.ts`,
+  embedded into every system prompt (main code, default chat,
+  subagent, built-in skills). Three near-identical copies
+  collapsed; subagents gain the "don't assert absence without
+  checking" guardrail they previously lacked.
+
+### Fixed
+
+- **`run_skill` accepts decorated names.** The Skills index wrote
+  entries like `- 🧬 explore`, and models copied the whole thing
+  verbatim into `run_skill({name:"🧬 explore"})`. The index now
+  uses a trailing `[🧬 subagent]` tag after the name, and
+  `run_skill` normalizes inputs by stripping bracketed tags +
+  leading emoji before lookup. Handles `"🧬 explore"`,
+  `"[🧬 subagent] explore"`, `"explore [🧬 subagent]"`, etc.
+- **`edit_file` result no longer shown twice.** The interceptor's
+  `applyNow` was pushing an info row, and the loop's tool event
+  re-displayed the same text as a proper tool row. Dropped the info
+  row push; the tool row alone carries the content.
+- **`run_command` / `run_background` descriptions teach their shell
+  constraints upfront.** Explicit list of rejected operators
+  (`&&`, `||`, `|`, `;`, `>`, `<`, `2>&1`), the `cd` doesn't-persist
+  rule, a warning against unbounded-output commands (`netstat -ano`,
+  `find /`), and concrete alternatives (`npm --prefix`, `cargo -C`,
+  `git -C`). Models stop burning turns rediscovering these via
+  error replies.
+
+### Refactored (no behavior change)
+
+- **App.tsx split** from 2931 → ~1980 lines by extracting
+  `LiveRows.tsx`, `edit-history.ts`, `useEditHistory.ts`,
+  `useCompletionPickers.ts`, `useSessionInfo.ts`, and
+  `useSubagent.ts`. Every hook under 310 lines.
+- **slash.ts split** from 1786 → 20-line barrel. Types,
+  SLASH_COMMANDS data + parse helpers, shared utility helpers, a
+  handler registry (`dispatch.ts`), and 10 per-topic handler files
+  all under `src/cli/ui/slash/`. Adding a command now means editing
+  one handler file + one registry line.
+
+### Docs
+
+- **`docs/ARCHITECTURE.md` rewritten** for v0.6. The four pillars,
+  current module layout (slash + handlers + hooks all reflected),
+  design-evolution timeline replacing the stale roadmap,
+  non-goals updated to call out "automatic cost escalation without
+  user-visible announcement" as explicitly rejected.
+
 ## [0.5.24] — 2026-04-24
 
 **Headline:** `reasonix code` gets a proper review gate, background
