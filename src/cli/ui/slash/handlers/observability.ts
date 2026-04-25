@@ -16,10 +16,10 @@ const think: SlashHandler = (_args, loop) => {
 };
 
 const tool: SlashHandler = (args, _loop, ctx) => {
-  // EventLog truncates tool results at 400 chars for display. When the
-  // user wants to check what the model actually read (e.g. to verify
-  // it isn't hallucinating a file's contents), they need the full
-  // text. `/tool` is the escape hatch.
+  // EventLog renders tool results as a one-line summary for display.
+  // When the user wants to check what the model actually read (e.g.
+  // to verify it isn't hallucinating a file's contents), they need
+  // the full text. `/tool` is the escape hatch.
   const history = ctx.toolHistory?.() ?? [];
   if (history.length === 0) {
     return {

@@ -6,6 +6,7 @@ import type { TurnStats } from "../../telemetry.js";
 import { PlanStateBlock } from "./PlanStateBlock.js";
 import { Markdown } from "./markdown.js";
 import { useElapsedSeconds, useTick } from "./ticker.js";
+import { summarizeToolResult } from "./tool-summary.js";
 
 export type DisplayRole =
   | "user"
@@ -140,37 +141,46 @@ export const EventRow = React.memo(function EventRow({
     );
   }
   if (event.role === "tool") {
-    // `flattenMcpResult` prefixes server-side errors with "ERROR: ".
-    // Render the tool glyph in red with a ✗ direction marker so the
-    // failure mode is unmissable — it's the signal the model needs
-    // most for its next decision.
-    const isError = event.text.startsWith("ERROR:");
-    const color = isError ? "red" : "yellow";
-    const glyph = isError ? ROLE_GLYPH.toolErr : ROLE_GLYPH.toolOk;
-    const marker = isError ? "✗" : "→";
-    // `edit_file` results get a dedicated diff renderer — colored
-    // line-by-line so `-` removals show red, `+` additions show
-    // green, unchanged context lines dim. Always full, never
-    // truncated: users need to see the whole change to trust
-    // /apply. Other tools keep the 400-char clip + /tool N escape.
+    // `edit_file` results get a dedicated multi-line diff renderer —
+    // colored line-by-line so `-` removals show red, `+` additions
+    // show green, unchanged context lines dim. Always full, never
+    // truncated: users need to see the whole change to trust /apply.
+    const isExplicitError = event.text.startsWith("ERROR:");
     const isEditFile =
-      (event.toolName === "edit_file" || event.toolName?.endsWith("_edit_file")) && !isError;
-    return (
-      <Box flexDirection="column" marginTop={1}>
-        <Box>
-          <RoleGlyph glyph={glyph} color={color} />
-          <Text color={color} bold>{`  ${event.toolName ?? "?"}`}</Text>
-          <Text color={color} dimColor>{`  ${marker}`}</Text>
-        </Box>
-        <Box flexDirection="column" paddingLeft={2} marginTop={1}>
-          {isEditFile ? (
-            <EditFileDiff text={event.text} />
-          ) : (
-            <Text color={isError ? "red" : undefined} dimColor={!isError}>
-              {truncate(event.text, 400)}
+      (event.toolName === "edit_file" || event.toolName?.endsWith("_edit_file")) &&
+      !isExplicitError;
+    if (isEditFile) {
+      return (
+        <Box flexDirection="column" marginTop={1}>
+          <Box>
+            <RoleGlyph glyph={ROLE_GLYPH.toolOk} color="yellow" />
+            <Text color="yellow" bold>{`  ${event.toolName ?? "?"}`}</Text>
+            <Text color="yellow" dimColor>
+              {"  →"}
             </Text>
-          )}
+          </Box>
+          <Box flexDirection="column" paddingLeft={2} marginTop={1}>
+            <EditFileDiff text={event.text} />
+          </Box>
         </Box>
+      );
+    }
+    // Compact one-line render for everything else. The summarizer
+    // produces a tool-aware one-liner (exit code for shell, line
+    // count for read_file, error tag for failures, ...). Full content
+    // remains accessible via `/tool N`.
+    const summary = summarizeToolResult(event.toolName ?? "?", event.text);
+    const color = summary.isError ? "red" : "yellow";
+    const glyph = summary.isError ? ROLE_GLYPH.toolErr : ROLE_GLYPH.toolOk;
+    const marker = summary.isError ? "✗" : "→";
+    return (
+      <Box>
+        <RoleGlyph glyph={glyph} color={color} />
+        <Text color={color} bold>{`  ${event.toolName ?? "?"}`}</Text>
+        <Text color={color} dimColor>{`  ${marker}  `}</Text>
+        <Text color={summary.isError ? "red" : undefined} dimColor={!summary.isError}>
+          {summary.summary}
+        </Text>
       </Box>
     );
   }
@@ -592,33 +602,4 @@ function StatsLine({ stats }: { stats: TurnStats }) {
       </Text>
     </Box>
   );
-}
-
-/**
- * Show the *tail* of a long tool result by default — the useful signal
- * (return value, summary, error line) usually lives at the end, not the
- * top-of-file boilerplate. For `ERROR:`-prefixed results, keep the
- * first line intact (that's the actual error message) AND include the
- * tail, so stack-trace endings stay visible too.
- *
- * Rendered like: `(+N earlier chars) …<tail>` so users can tell at a
- * glance that something was elided. `/tool N` still dumps the full
- * content for cases where the middle matters.
- */
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  if (s.startsWith("ERROR:")) {
-    const firstNl = s.indexOf("\n");
-    const firstLine = firstNl === -1 ? s : s.slice(0, firstNl);
-    // If the first line alone is bigger than max, just show it truncated.
-    if (firstLine.length >= max) {
-      return `${firstLine.slice(0, max)}… (+${s.length - max} chars — /tool N for full)`;
-    }
-    const budget = max - firstLine.length - 10; // reserve space for separator + ellipsis
-    const tail = s.slice(-budget);
-    const skipped = s.length - firstLine.length - tail.length;
-    return `${firstLine}\n… (+${skipped} chars) …\n${tail}`;
-  }
-  const skipped = s.length - max;
-  return `… (+${skipped} earlier chars — /tool N for full) …\n${s.slice(-max)}`;
 }

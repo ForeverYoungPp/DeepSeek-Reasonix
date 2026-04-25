@@ -1,0 +1,128 @@
+/**
+ * summarizeToolResult — the one-line tool-row renderer that powers
+ * compact scrollback. Pure function; lives outside Ink so we can
+ * test the per-tool-name and structured-payload branches directly.
+ */
+
+import { describe, expect, it } from "vitest";
+import { summarizeToolResult } from "../src/cli/ui/tool-summary.js";
+
+describe("summarizeToolResult — error envelopes", () => {
+  it("flags ERROR:-prefixed text as a real error and strips the prefix", () => {
+    const out = summarizeToolResult("anything", "ERROR: file not found");
+    expect(out.isError).toBe(true);
+    expect(out.summary).toBe("file not found");
+  });
+
+  it("treats structured {error:...} JSON as an error and shows tag + detail", () => {
+    const out = summarizeToolResult("read_file", JSON.stringify({ error: "ENOENT: no such file" }));
+    expect(out.isError).toBe(true);
+    expect(out.summary).toMatch(/^ENOENT/);
+  });
+
+  it("recognizes Plan / Choice control-flow signals as NON-errors", () => {
+    const cases = [
+      "PlanProposedError",
+      "PlanCheckpointError",
+      "PlanRevisionProposedError",
+      "ChoiceRequestedError",
+      "NeedsConfirmationError",
+    ];
+    for (const tag of cases) {
+      const out = summarizeToolResult(
+        "any_tool",
+        JSON.stringify({ error: `${tag}: STOP — picker shown to user.` }),
+      );
+      expect(out.isError, tag).toBe(false);
+      expect(out.summary, tag).toMatch(new RegExp(tag));
+    }
+  });
+
+  it("falls back to the bare error tag when no detail follows the colon", () => {
+    const out = summarizeToolResult("x", JSON.stringify({ error: "SomeError" }));
+    expect(out.isError).toBe(true);
+    expect(out.summary).toBe("SomeError");
+  });
+
+  it("handles step_completed payload as a non-error tick", () => {
+    const out = summarizeToolResult(
+      "mark_step_complete",
+      JSON.stringify({ kind: "step_completed", stepId: "step-2", result: "wired middleware" }),
+    );
+    expect(out.isError).toBe(false);
+    expect(out.summary).toMatch(/✓ step-2/);
+  });
+});
+
+describe("summarizeToolResult — known tools", () => {
+  it("read_file: shows first line + line count + size", () => {
+    const content = "import { foo } from 'bar';\nexport function baz() {}\n";
+    const out = summarizeToolResult("read_file", content);
+    expect(out.isError).toBe(false);
+    expect(out.summary).toMatch(/import.*foo/);
+    expect(out.summary).toMatch(/3 lines/);
+    expect(out.summary).toMatch(/B/);
+  });
+
+  it("list_directory: shows entry count", () => {
+    const out = summarizeToolResult("list_directory", "src/\ntests/\nREADME.md\n");
+    expect(out.summary).toBe("3 entries");
+  });
+
+  it("list_directory with one entry uses singular", () => {
+    const out = summarizeToolResult("list_directory", "only-thing\n");
+    expect(out.summary).toBe("1 entry");
+  });
+
+  it("search_content: shows match count + first match", () => {
+    const out = summarizeToolResult(
+      "search_content",
+      "src/foo.ts:12: const x = 1\nsrc/bar.ts:34: const x = 2",
+    );
+    expect(out.summary).toMatch(/2 matches/);
+    expect(out.summary).toMatch(/src\/foo\.ts/);
+  });
+
+  it("search_content: explicit no-match path", () => {
+    const out = summarizeToolResult("search_content", "");
+    expect(out.summary).toBe("no matches");
+  });
+
+  it("run_command: surfaces exit code and first line", () => {
+    const out = summarizeToolResult("run_command", "exit 0\nhello world");
+    expect(out.isError).toBe(false);
+    expect(out.summary).toMatch(/exit 0/);
+  });
+
+  it("run_command: non-zero exit flags the row as an error", () => {
+    const out = summarizeToolResult("run_command", "exit 1\nError: something went wrong");
+    expect(out.isError).toBe(true);
+    expect(out.summary).toMatch(/exit 1/);
+  });
+});
+
+describe("summarizeToolResult — generic fallback", () => {
+  it("returns first line only for short content", () => {
+    const out = summarizeToolResult("custom_tool", "hello");
+    expect(out.summary).toBe("hello");
+    expect(out.isError).toBe(false);
+  });
+
+  it("appends a size hint for long content", () => {
+    const long = `first line\n${"x".repeat(2000)}`;
+    const out = summarizeToolResult("custom_tool", long);
+    expect(out.summary).toMatch(/first line/);
+    expect(out.summary).toMatch(/KB/);
+  });
+
+  it("handles empty string as (empty)", () => {
+    const out = summarizeToolResult("anything", "");
+    expect(out.summary).toBe("(empty)");
+  });
+
+  it("clips overly long single lines with an ellipsis and stays under the budget", () => {
+    const out = summarizeToolResult("anything", "a".repeat(500));
+    expect(out.summary).toMatch(/…/);
+    expect(out.summary.length).toBeLessThanOrEqual(80);
+  });
+});
