@@ -39,6 +39,28 @@ function firstNonEmptyLine(text: string): string {
   return "";
 }
 
+/**
+ * Render a duration in milliseconds as a tight human label for the
+ * compact tool row. Picks a representation that fits in ~5 chars so
+ * the surrounding row stays readable on narrow terminals.
+ *
+ *   <  100ms → "47ms"
+ *   < 1000ms → "0.4s"
+ *   <   60s  → "12s"  (or "1.2s" for sub-10-second times)
+ *   >=  60s  → "1m30s"
+ */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 100) return `${Math.round(ms)}ms`;
+  if (ms < 1000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  const totalSec = Math.round(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s === 0 ? `${m}m` : `${m}m${s}s`;
+}
+
 function formatBytes(n: number): string {
   if (n < 1000) return `${n}B`;
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}KB`;

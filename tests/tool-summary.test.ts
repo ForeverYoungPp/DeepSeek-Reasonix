@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { summarizeToolResult } from "../src/cli/ui/tool-summary.js";
+import { formatDuration, summarizeToolResult } from "../src/cli/ui/tool-summary.js";
 
 describe("summarizeToolResult — error envelopes", () => {
   it("flags ERROR:-prefixed text as a real error and strips the prefix", () => {
@@ -98,6 +98,42 @@ describe("summarizeToolResult — known tools", () => {
     const out = summarizeToolResult("run_command", "exit 1\nError: something went wrong");
     expect(out.isError).toBe(true);
     expect(out.summary).toMatch(/exit 1/);
+  });
+});
+
+describe("formatDuration", () => {
+  it("renders sub-100ms in milliseconds", () => {
+    expect(formatDuration(0)).toBe("0ms");
+    expect(formatDuration(47)).toBe("47ms");
+    expect(formatDuration(99)).toBe("99ms");
+  });
+
+  it("renders sub-second times in 1-decimal seconds", () => {
+    expect(formatDuration(100)).toBe("0.1s");
+    expect(formatDuration(450)).toBe("0.5s");
+    expect(formatDuration(999)).toBe("1.0s");
+  });
+
+  it("renders sub-10s times with one decimal", () => {
+    expect(formatDuration(1234)).toBe("1.2s");
+    expect(formatDuration(8500)).toBe("8.5s");
+  });
+
+  it("renders 10s–60s as integer seconds", () => {
+    expect(formatDuration(10_000)).toBe("10s");
+    expect(formatDuration(45_900)).toBe("46s");
+  });
+
+  it("renders minutes-and-seconds for long runs", () => {
+    expect(formatDuration(60_000)).toBe("1m");
+    expect(formatDuration(90_000)).toBe("1m30s");
+    expect(formatDuration(125_500)).toBe("2m6s");
+  });
+
+  it("returns empty string for invalid input", () => {
+    expect(formatDuration(Number.NaN)).toBe("");
+    expect(formatDuration(-1)).toBe("");
+    expect(formatDuration(Number.POSITIVE_INFINITY)).toBe("");
   });
 });
 

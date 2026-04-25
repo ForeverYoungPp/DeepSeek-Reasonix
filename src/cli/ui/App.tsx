@@ -378,6 +378,11 @@ export function App({
   // revised plan starts fresh — old completions don't spill over.
   const planStepsRef = useRef<PlanStep[] | null>(null);
   const completedStepIdsRef = useRef<Set<string>>(new Set());
+  // Wall-clock when the latest tool_start fired. Cleared when the
+  // matching `tool` event arrives (or at turn end). Tools are
+  // dispatched serially in the loop, so a single ref is enough — no
+  // need for a per-toolName map.
+  const toolStartedAtRef = useRef<number | null>(null);
   const [summary, setSummary] = useState<SessionSummary>({
     turns: 0,
     totalCostUsd: 0,
@@ -1497,6 +1502,7 @@ export function App({
             // the new spinner starts clean.
             setOngoingTool({ name: ev.toolName ?? "?", args: ev.toolArgs });
             setToolProgress(null);
+            toolStartedAtRef.current = Date.now();
             // Feed the `@` picker's recency LRU from tool args — any
             // path-shaped field (`path`, `file_path`, `file`) under a
             // filesystem tool call means the user/model is actively
@@ -1528,11 +1534,15 @@ export function App({
             // below — suppressing the raw tool row here keeps the log
             // from showing the same JSON blob twice.
             const isStepProgressTool = ev.toolName === "mark_step_complete";
+            const startedAt = toolStartedAtRef.current;
+            const durationMs = startedAt !== null ? Date.now() - startedAt : undefined;
+            toolStartedAtRef.current = null;
             if (!isStepProgressTool) {
               toolHistoryRef.current.push({
                 toolName: ev.toolName ?? "?",
                 text: ev.content,
               });
+              const toolIndex = toolHistoryRef.current.length;
               setHistorical((prev) => [
                 ...prev,
                 {
@@ -1540,6 +1550,8 @@ export function App({
                   role: "tool",
                   text: ev.content,
                   toolName: ev.toolName,
+                  toolIndex,
+                  durationMs,
                 },
               ]);
             }

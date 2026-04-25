@@ -6,7 +6,7 @@ import type { TurnStats } from "../../telemetry.js";
 import { PlanStateBlock } from "./PlanStateBlock.js";
 import { Markdown } from "./markdown.js";
 import { useElapsedSeconds, useTick } from "./ticker.js";
-import { summarizeToolResult } from "./tool-summary.js";
+import { formatDuration, summarizeToolResult } from "./tool-summary.js";
 
 export type DisplayRole =
   | "user"
@@ -40,6 +40,14 @@ export interface DisplayEvent {
   branch?: BranchSummary;
   branchProgress?: BranchProgress;
   toolName?: string;
+  /**
+   * 1-based position in the session's tool-call history. Rendered as a
+   * dim `/tool N` suffix on compact rows so the user can quickly jump
+   * to the full output via the existing `/tool` slash command.
+   */
+  toolIndex?: number;
+  /** Wall-clock duration in ms between tool_start and result. */
+  durationMs?: number;
   stats?: TurnStats;
   repair?: string;
   streaming?: boolean;
@@ -168,19 +176,26 @@ export const EventRow = React.memo(function EventRow({
     // Compact one-line render for everything else. The summarizer
     // produces a tool-aware one-liner (exit code for shell, line
     // count for read_file, error tag for failures, ...). Full content
-    // remains accessible via `/tool N`.
+    // remains accessible via `/tool N`, hinted as a dim suffix.
     const summary = summarizeToolResult(event.toolName ?? "?", event.text);
     const color = summary.isError ? "red" : "yellow";
     const glyph = summary.isError ? ROLE_GLYPH.toolErr : ROLE_GLYPH.toolOk;
     const marker = summary.isError ? "✗" : "→";
+    const durationLabel =
+      event.durationMs !== undefined && event.durationMs >= 100
+        ? ` (${formatDuration(event.durationMs)})`
+        : "";
+    const indexHint = event.toolIndex !== undefined ? `  /tool ${event.toolIndex}` : "";
     return (
       <Box>
         <RoleGlyph glyph={glyph} color={color} />
         <Text color={color} bold>{`  ${event.toolName ?? "?"}`}</Text>
+        {durationLabel ? <Text dimColor>{durationLabel}</Text> : null}
         <Text color={color} dimColor>{`  ${marker}  `}</Text>
         <Text color={summary.isError ? "red" : undefined} dimColor={!summary.isError}>
           {summary.summary}
         </Text>
+        {indexHint ? <Text dimColor>{indexHint}</Text> : null}
       </Box>
     );
   }
