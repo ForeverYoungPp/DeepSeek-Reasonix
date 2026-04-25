@@ -91,6 +91,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
       "shrink oversized tool results AND tool-call args (edit_file search/replace) in the log; cap in tokens, default 4000",
   },
   { cmd: "keys", summary: "show all keyboard shortcuts and prompt prefixes" },
+  { cmd: "plans", summary: "list this session's active + archived plans, newest first" },
   { cmd: "sessions", summary: "list saved sessions (current marked with ▸)" },
   { cmd: "forget", summary: "delete the current session from disk" },
   { cmd: "setup", summary: "reminds you to exit and run `reasonix setup`" },

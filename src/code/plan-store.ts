@@ -27,7 +27,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -160,6 +162,82 @@ export function archivePlanState(sessionName: string): string | null {
     );
     return null;
   }
+}
+
+/**
+ * Summary of one archived (completed) plan, as returned by
+ * `listPlanArchives`. The `completedAt` ISO string comes from the
+ * archive file's stored `updatedAt` (or its mtime as fallback) so it
+ * survives across machines / clock skew. `path` is absolute and ready
+ * for a future `/replay` to read directly.
+ */
+export interface PlanArchiveSummary {
+  path: string;
+  completedAt: string;
+  steps: PlanStep[];
+  completedStepIds: string[];
+}
+
+/**
+ * List all archived `.done.json` files for this session, newest
+ * first. Used by `/plans` to give the user a project-local history.
+ * Cross-project listing is intentionally NOT supported here — a plan
+ * lives next to its session, and resuming it just means switching
+ * back to that project's directory.
+ *
+ * Robust to missing dir / unreadable entries: a corrupt archive is
+ * skipped, not propagated. Worst case the user sees a shorter list
+ * than reality.
+ */
+export function listPlanArchives(sessionName: string): PlanArchiveSummary[] {
+  const dir = sessionsDir();
+  if (!existsSync(dir)) return [];
+  const prefix = `${sanitizeName(sessionName)}.plan.`;
+  const suffix = ".done.json";
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const summaries: PlanArchiveSummary[] = [];
+  for (const name of entries) {
+    if (!name.startsWith(prefix) || !name.endsWith(suffix)) continue;
+    const full = join(dir, name);
+    try {
+      const raw = readFileSync(full, "utf8");
+      const parsed = JSON.parse(raw) as Partial<PlanStateOnDisk>;
+      if (parsed.version !== 1) continue;
+      if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) continue;
+      const steps = parsed.steps.filter(
+        (s): s is PlanStep =>
+          !!s &&
+          typeof s === "object" &&
+          typeof (s as PlanStep).id === "string" &&
+          typeof (s as PlanStep).title === "string" &&
+          typeof (s as PlanStep).action === "string",
+      );
+      if (steps.length === 0) continue;
+      const completedStepIds = Array.isArray(parsed.completedStepIds)
+        ? parsed.completedStepIds.filter((id): id is string => typeof id === "string" && !!id)
+        : [];
+      // Prefer the file's own updatedAt; fall back to mtime if missing
+      // or unparseable so a hand-edited archive still sorts sensibly.
+      let completedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : "";
+      if (!completedAt || Number.isNaN(Date.parse(completedAt))) {
+        try {
+          completedAt = statSync(full).mtime.toISOString();
+        } catch {
+          completedAt = new Date(0).toISOString();
+        }
+      }
+      summaries.push({ path: full, completedAt, steps, completedStepIds });
+    } catch {
+      // Skip the corrupt archive entirely.
+    }
+  }
+  summaries.sort((a, b) => b.completedAt.localeCompare(a.completedAt));
+  return summaries;
 }
 
 /**

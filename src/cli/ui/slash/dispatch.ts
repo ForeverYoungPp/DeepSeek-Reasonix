@@ -7,6 +7,7 @@ import { handlers as mcpHandlers } from "./handlers/mcp.js";
 import { handlers as memoryHandlers } from "./handlers/memory.js";
 import { handlers as modelHandlers } from "./handlers/model.js";
 import { handlers as observabilityHandlers } from "./handlers/observability.js";
+import { handlers as plansHandlers } from "./handlers/plans.js";
 import { handlers as sessionsHandlers } from "./handlers/sessions.js";
 import { handlers as skillHandlers } from "./handlers/skill.js";
 import type { SlashContext, SlashResult } from "./types.js";
@@ -36,6 +37,7 @@ const HANDLERS: Record<string, SlashHandler> = {
   ...memoryHandlers,
   ...modelHandlers,
   ...observabilityHandlers,
+  ...plansHandlers,
   ...sessionsHandlers,
   ...skillHandlers,
 };
