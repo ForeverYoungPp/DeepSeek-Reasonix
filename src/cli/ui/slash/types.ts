@@ -2,6 +2,7 @@ import type { EditMode } from "../../../config.js";
 import type { McpClient } from "../../../mcp/client.js";
 import type { InspectionReport } from "../../../mcp/inspect.js";
 import type { JobRegistry } from "../../../tools/jobs.js";
+import type { PlanStep } from "../../../tools/plan.js";
 
 export interface SlashResult {
   /** Text to display back to the user as a system/info line. */
@@ -19,6 +20,25 @@ export interface SlashResult {
    * submit flow so a fresh turn runs.
    */
   resubmit?: string;
+  /**
+   * Render an archived plan as a read-only "Time Travel" block in
+   * scrollback. Populated by `/replay [N]`. The TUI mounts it as a
+   * `plan-replay` DisplayEvent so the same step-list / risk gutter
+   * styling gets reused. Strictly a display payload — no execution.
+   */
+  replayPlan?: {
+    summary?: string;
+    body?: string;
+    steps: PlanStep[];
+    completedStepIds: string[];
+    completedAt: string;
+    relativeTime: string;
+    archiveBasename: string;
+    /** 1-based index in `/plans` listing — surfaced in the header. */
+    index: number;
+    /** Total archives at the time of the lookup; helps the user navigate. */
+    total: number;
+  };
 }
 
 /**

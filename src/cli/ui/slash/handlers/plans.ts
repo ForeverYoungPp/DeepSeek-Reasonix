@@ -5,6 +5,7 @@
  * and resuming one just means cd'ing back to that project directory.
  */
 
+import { basename } from "node:path";
 import { listPlanArchives, loadPlanState, relativeTime } from "../../../../code/plan-store.js";
 import type { SlashHandler } from "../dispatch.js";
 
@@ -58,6 +59,53 @@ const plans: SlashHandler = (_args, loop) => {
   return { info: lines.join("\n") };
 };
 
+/**
+ * `/replay [N]` — Time Travel. Loads archive #N (1-based, newest
+ * first; defaults to 1) and asks the TUI to render it as a read-only
+ * snapshot. Pure display — no execution, no plan state changes.
+ *
+ * The structured payload (steps + completedStepIds + body + summary)
+ * goes back through SlashResult.replayPlan so EventLog can apply the
+ * same step-list rendering used elsewhere, complete with risk gutter
+ * and ✓ status.
+ */
+const replay: SlashHandler = (args, loop) => {
+  const sessionName = loop.sessionName;
+  if (!sessionName) {
+    return {
+      info: "no session attached — `/replay` is per-session. Run `reasonix code` in a project to get a session.",
+    };
+  }
+  const archives = listPlanArchives(sessionName);
+  if (archives.length === 0) {
+    return {
+      info: "no archived plans yet for this session — `/replay` lights up once a plan completes (auto-archives when every step is done).",
+    };
+  }
+  const arg = args[0]?.trim() ?? "";
+  const index = arg ? Number.parseInt(arg, 10) : 1;
+  if (!Number.isFinite(index) || index < 1 || index > archives.length) {
+    return {
+      info: `invalid index — \`/replay\` takes 1..${archives.length} (newest = 1). Use \`/plans\` to see the list.`,
+    };
+  }
+  const a = archives[index - 1]!;
+  return {
+    replayPlan: {
+      summary: a.summary,
+      body: a.body,
+      steps: a.steps,
+      completedStepIds: a.completedStepIds,
+      completedAt: a.completedAt,
+      relativeTime: relativeTime(a.completedAt),
+      archiveBasename: basename(a.path),
+      index,
+      total: archives.length,
+    },
+  };
+};
+
 export const handlers: Record<string, SlashHandler> = {
   plans,
+  replay,
 };

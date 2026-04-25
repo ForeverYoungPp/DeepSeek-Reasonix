@@ -856,6 +856,150 @@ describe("handleSlash", () => {
     expect(r.info).toMatch(/nothing to forget/);
   });
 
+  describe("/plans + /replay", () => {
+    let tempHome: string;
+    let originalHome: string | undefined;
+    let originalUserProfile: string | undefined;
+
+    beforeEach(() => {
+      tempHome = mkdtempSync(join(tmpdir(), "reasonix-replay-slash-"));
+      originalHome = process.env.HOME;
+      originalUserProfile = process.env.USERPROFILE;
+      process.env.HOME = tempHome;
+      process.env.USERPROFILE = tempHome;
+    });
+    afterEach(() => {
+      process.env.HOME = originalHome;
+      process.env.USERPROFILE = originalUserProfile;
+      rmSync(tempHome, { recursive: true, force: true });
+    });
+
+    function loopWithSession(name: string): CacheFirstLoop {
+      const client = new DeepSeekClient({
+        apiKey: "sk-test",
+        fetch: vi.fn() as unknown as typeof fetch,
+      });
+      return new CacheFirstLoop({
+        client,
+        prefix: new ImmutablePrefix({ system: "s" }),
+        session: name,
+      });
+    }
+
+    function writeArchive(
+      sessionName: string,
+      stamp: string,
+      payload: Record<string, unknown>,
+    ): void {
+      const dir = join(tempHome, ".reasonix", "sessions");
+      const fs = require("node:fs") as typeof import("node:fs");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        join(dir, `${sessionName}.plan.${stamp}.done.json`),
+        JSON.stringify(payload),
+      );
+    }
+
+    it("/replay without args returns the newest archive", () => {
+      const loop = loopWithSession("replay-test");
+      writeArchive("replay-test", "2026-04-01-old", {
+        version: 1,
+        steps: [{ id: "step-1", title: "old work", action: "a" }],
+        completedStepIds: ["step-1"],
+        updatedAt: "2026-04-01T00:00:00.000Z",
+        summary: "Older plan",
+      });
+      writeArchive("replay-test", "2026-04-20-new", {
+        version: 1,
+        steps: [
+          { id: "step-1", title: "extract", action: "a" },
+          { id: "step-2", title: "rewire", action: "b" },
+        ],
+        completedStepIds: ["step-1", "step-2"],
+        updatedAt: "2026-04-20T00:00:00.000Z",
+        summary: "Newer plan",
+        body: "# Plan\n- do thing",
+      });
+      const r = handleSlash("replay", [], loop);
+      expect(r.replayPlan).toBeDefined();
+      expect(r.replayPlan?.summary).toBe("Newer plan");
+      expect(r.replayPlan?.steps).toHaveLength(2);
+      expect(r.replayPlan?.body).toBe("# Plan\n- do thing");
+      expect(r.replayPlan?.index).toBe(1);
+      expect(r.replayPlan?.total).toBe(2);
+    });
+
+    it("/replay 2 returns the older archive in a 2-archive session", () => {
+      const loop = loopWithSession("replay-idx");
+      writeArchive("replay-idx", "2026-04-01-a", {
+        version: 1,
+        steps: [{ id: "x", title: "y", action: "z" }],
+        completedStepIds: ["x"],
+        updatedAt: "2026-04-01T00:00:00.000Z",
+        summary: "Older",
+      });
+      writeArchive("replay-idx", "2026-04-20-b", {
+        version: 1,
+        steps: [{ id: "x", title: "y", action: "z" }],
+        completedStepIds: ["x"],
+        updatedAt: "2026-04-20T00:00:00.000Z",
+        summary: "Newer",
+      });
+      const r = handleSlash("replay", ["2"], loop);
+      expect(r.replayPlan?.summary).toBe("Older");
+      expect(r.replayPlan?.index).toBe(2);
+    });
+
+    it("/replay rejects out-of-range index", () => {
+      const loop = loopWithSession("replay-oob");
+      writeArchive("replay-oob", "2026-04-20-a", {
+        version: 1,
+        steps: [{ id: "x", title: "y", action: "z" }],
+        completedStepIds: [],
+        updatedAt: "2026-04-20T00:00:00.000Z",
+      });
+      const r = handleSlash("replay", ["5"], loop);
+      expect(r.replayPlan).toBeUndefined();
+      expect(r.info).toMatch(/invalid index/);
+    });
+
+    it("/replay says nothing to replay when no archives exist", () => {
+      const loop = loopWithSession("replay-empty");
+      const r = handleSlash("replay", [], loop);
+      expect(r.replayPlan).toBeUndefined();
+      expect(r.info).toMatch(/no archived plans yet/);
+    });
+
+    it("/replay needs a session", () => {
+      const r = handleSlash("replay", [], makeLoop());
+      expect(r.replayPlan).toBeUndefined();
+      expect(r.info).toMatch(/no session attached/);
+    });
+
+    it("/plans surfaces the summary as the active plan label", () => {
+      const loop = loopWithSession("plans-summary");
+      const fs = require("node:fs") as typeof import("node:fs");
+      const dir = join(tempHome, ".reasonix", "sessions");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        join(dir, "plans-summary.plan.json"),
+        JSON.stringify({
+          version: 1,
+          steps: [
+            { id: "s1", title: "a", action: "b" },
+            { id: "s2", title: "c", action: "d" },
+          ],
+          completedStepIds: ["s1"],
+          updatedAt: new Date().toISOString(),
+          summary: "Refactor auth into signed tokens",
+        }),
+      );
+      const r = handleSlash("plans", [], loop);
+      expect(r.info).toMatch(/Refactor auth into signed tokens/);
+      expect(r.info).toMatch(/1\/2/);
+    });
+  });
+
   describe("/memory", () => {
     let root: string;
     const originalEnv = process.env.REASONIX_MEMORY;

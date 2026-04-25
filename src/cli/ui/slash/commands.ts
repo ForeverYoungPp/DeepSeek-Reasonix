@@ -92,6 +92,11 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   },
   { cmd: "keys", summary: "show all keyboard shortcuts and prompt prefixes" },
   { cmd: "plans", summary: "list this session's active + archived plans, newest first" },
+  {
+    cmd: "replay",
+    summary: "load an archived plan as a read-only Time Travel snapshot (default: newest)",
+    argsHint: "[N]",
+  },
   { cmd: "sessions", summary: "list saved sessions (current marked with ▸)" },
   { cmd: "forget", summary: "delete the current session from disk" },
   { cmd: "setup", summary: "reminds you to exit and run `reasonix setup`" },

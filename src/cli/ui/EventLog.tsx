@@ -38,7 +38,14 @@ export type DisplayRole =
    * progress so the user sees exactly where they left off — much
    * more useful than the bare "2/5 done" info line it replaced.
    */
-  | "plan-resumed";
+  | "plan-resumed"
+  /**
+   * Read-only snapshot of an archived (completed) plan, pushed by
+   * the `/replay` slash. Visually distinct from `plan-resumed` —
+   * dim border + ⏪ icon — so the user immediately sees this is
+   * historical, not the active plan.
+   */
+  | "plan-replay";
 
 export interface DisplayEvent {
   id: string;
@@ -85,6 +92,21 @@ export interface DisplayEvent {
     relativeTime: string;
     /** Optional human-friendly title; rendered in the banner header when set. */
     summary?: string;
+  };
+  /**
+   * Populated on `plan-replay` rows: the archived plan plus enough
+   * navigation context (index / total) for the user to know where
+   * they are in the archive history.
+   */
+  replayPlan?: {
+    summary?: string;
+    body?: string;
+    steps: PlanStep[];
+    completedStepIds: string[];
+    relativeTime: string;
+    archiveBasename: string;
+    index: number;
+    total: number;
   };
   /**
    * Render a thin horizontal rule above this event. Used to mark
@@ -314,6 +336,54 @@ export const EventRow = React.memo(function EventRow({
         </Box>
         <Box marginTop={1} flexDirection="column">
           <PlanStepList steps={rp.steps} statuses={statuses} focusStepId={nextStep?.id} />
+        </Box>
+      </Box>
+    );
+  }
+  if (event.role === "plan-replay") {
+    const r = event.replayPlan;
+    if (!r || r.steps.length === 0) return null;
+    const total = r.steps.length;
+    const completedSet = new Set(r.completedStepIds);
+    const done = completedSet.size;
+    const statuses = new Map(
+      r.steps.map((s) => [s.id, completedSet.has(s.id) ? ("done" as const) : ("pending" as const)]),
+    );
+    const navHint = r.total > 1 ? ` · ${r.index}/${r.total}` : "";
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} marginY={1}>
+        <Box flexDirection="column">
+          <Box>
+            <Text bold dimColor>
+              ⏪ replay
+            </Text>
+            <Text
+              dimColor
+            >{`  completed ${r.relativeTime} · ${done}/${total} done${navHint}`}</Text>
+          </Box>
+          {r.summary ? (
+            <Box>
+              <Text dimColor>{`  ${r.summary}`}</Text>
+            </Box>
+          ) : null}
+          <Box>
+            <Text dimColor>{`  ${r.archiveBasename}`}</Text>
+          </Box>
+        </Box>
+        {r.body ? (
+          <Box marginTop={1} flexDirection="column">
+            <Markdown text={r.body} projectRoot={projectRoot} />
+          </Box>
+        ) : null}
+        <Box marginTop={1} flexDirection="column">
+          <PlanStepList steps={r.steps} statuses={statuses} />
+        </Box>
+        <Box marginTop={1}>
+          <Text dimColor>
+            {r.total > 1
+              ? `(read-only · /replay ${r.index === 1 ? 2 : 1} for the ${r.index === 1 ? "next" : "newest"} archive)`
+              : "(read-only · this is an archived plan)"}
+          </Text>
         </Box>
       </Box>
     );

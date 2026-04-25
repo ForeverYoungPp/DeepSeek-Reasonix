@@ -1266,6 +1266,31 @@ export function App({
             },
           ]);
         }
+        // /replay returns a structured archive snapshot. Push it as a
+        // plan-replay DisplayEvent so EventLog renders the same step
+        // list the active plan uses, just dim/locked. Does NOT touch
+        // planStepsRef — replay is read-only.
+        if (result.replayPlan) {
+          const rp = result.replayPlan;
+          setHistorical((prev) => [
+            ...prev,
+            {
+              id: `replay-${Date.now()}-${Math.random()}`,
+              role: "plan-replay",
+              text: "",
+              replayPlan: {
+                summary: rp.summary,
+                body: rp.body,
+                steps: rp.steps,
+                completedStepIds: rp.completedStepIds,
+                relativeTime: rp.relativeTime,
+                archiveBasename: rp.archiveBasename,
+                index: rp.index,
+                total: rp.total,
+              },
+            },
+          ]);
+        }
         // `/retry` (and anything else that requests a resubmit) falls
         // through to the normal user-message flow with the provided
         // text instead of returning.
