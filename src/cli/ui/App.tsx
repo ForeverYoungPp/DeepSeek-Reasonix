@@ -12,6 +12,12 @@ import {
 } from "../../code/edit-blocks.js";
 import { clearPendingEdits, loadPendingEdits, savePendingEdits } from "../../code/pending-edits.js";
 import {
+  clearPlanState,
+  loadPlanState,
+  relativeTime,
+  savePlanState,
+} from "../../code/plan-store.js";
+import {
   type EditMode,
   type ReasoningEffort,
   addProjectShellAllowed,
@@ -383,6 +389,21 @@ export function App({
   // dispatched serially in the loop, so a single ref is enough — no
   // need for a per-toolName map.
   const toolStartedAtRef = useRef<number | null>(null);
+  // Persist the active plan state (steps + completedStepIds) to disk
+  // whenever it changes, so closing the terminal doesn't lose
+  // structured progress. The on-disk format lives in plan-store.ts;
+  // we just thread the session name through and call save/clear at
+  // the right points. No-op when session is undefined (e.g.
+  // ephemeral runs with --no-session).
+  const persistPlanState = useCallback(() => {
+    if (!session) return;
+    const steps = planStepsRef.current;
+    if (!steps || steps.length === 0) {
+      clearPlanState(session);
+      return;
+    }
+    savePlanState(session, steps, completedStepIdsRef.current);
+  }, [session]);
   const [summary, setSummary] = useState<SessionSummary>({
     turns: 0,
     totalCostUsd: 0,
@@ -586,6 +607,30 @@ export function App({
             id: `sys-pending-${Date.now()}`,
             role: "info",
             text: `▸ restored ${restored.length} pending edit block(s) from an interrupted prior run — /apply to commit or /discard to drop.`,
+          },
+        ]);
+      }
+    }
+    // Restore structured plan state from a prior run. plan.json sits
+    // next to the session JSONL; if present, populate planStepsRef +
+    // completedStepIdsRef and post an info row showing how far along
+    // the plan was. Pure-markdown plans don't persist (nothing to
+    // restore), so users see this banner only when there's real
+    // structured state to pick back up.
+    if (session) {
+      const restoredPlan = loadPlanState(session);
+      if (restoredPlan && restoredPlan.steps.length > 0) {
+        planStepsRef.current = restoredPlan.steps;
+        completedStepIdsRef.current = new Set(restoredPlan.completedStepIds);
+        const total = restoredPlan.steps.length;
+        const done = completedStepIdsRef.current.size;
+        const when = relativeTime(restoredPlan.updatedAt);
+        setHistorical((prev) => [
+          ...prev,
+          {
+            id: `sys-plan-${Date.now()}`,
+            role: "info",
+            text: `▸ resumed plan: ${done}/${total} step${total === 1 ? "" : "s"} done · last touched ${when}`,
           },
         ]);
       }
@@ -1599,6 +1644,7 @@ export function App({
                   const steps = Array.isArray(parsed.steps) ? (parsed.steps as PlanStep[]) : null;
                   planStepsRef.current = steps;
                   completedStepIdsRef.current = new Set();
+                  persistPlanState();
                   setHistorical((prev) => [
                     ...prev,
                     {
@@ -1698,6 +1744,7 @@ export function App({
                 const stepId = parsed.stepId;
                 if (parsed.kind === "step_completed" && typeof stepId === "string") {
                   completedStepIdsRef.current.add(stepId);
+                  persistPlanState();
                   const total = planStepsRef.current?.length ?? 0;
                   const completed = completedStepIdsRef.current.size;
                   const stepFromPlan = planStepsRef.current?.find((s) => s.id === stepId);
@@ -1836,6 +1883,7 @@ export function App({
       refreshLatestVersion,
       refreshModels,
       proArmed,
+      persistPlanState,
     ],
   );
 
@@ -2002,6 +2050,11 @@ export function App({
 
       // Cancel — no input needed, fire immediately.
       setPendingPlan(null);
+      // Drop any structured plan state on disk too — the user explicitly
+      // said this isn't the path they want, no point holding onto it.
+      planStepsRef.current = null;
+      completedStepIdsRef.current = new Set();
+      persistPlanState();
       togglePlanMode(false);
       const marker = "▸ plan cancelled";
       const synthetic =
@@ -2017,7 +2070,7 @@ export function App({
         await handleSubmit(synthetic);
       }
     },
-    [pendingPlan, togglePlanMode, busy, loop, handleSubmit],
+    [pendingPlan, togglePlanMode, busy, loop, handleSubmit, persistPlanState],
   );
 
   // Ref-wrapped stable alias. `handlePlanConfirm` has deps that churn
@@ -2307,6 +2360,7 @@ export function App({
         merged.push(s);
       }
       planStepsRef.current = merged;
+      persistPlanState();
       const removedCount = oldSteps.filter(
         (s) => !completed.has(s.id) && !snap.remainingSteps.some((n) => n.id === s.id),
       ).length;
@@ -2330,7 +2384,7 @@ export function App({
         await handleSubmit(synthetic);
       }
     },
-    [pendingRevision, busy, loop, handleSubmit],
+    [pendingRevision, busy, loop, handleSubmit, persistPlanState],
   );
 
   // Ref-wrap to keep PlanReviseConfirm's React.memo from re-rendering.
