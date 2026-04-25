@@ -73,10 +73,24 @@ const NOOP: MultilineAction = { next: null, cursor: null, submit: false };
 
 function rewriteRawArrowEscape(key: MultilineKey): MultilineKey {
   if (key.upArrow || key.downArrow || key.leftArrow || key.rightArrow) return key;
+  // Full CSI sequences — terminals that pass `\x1b` through to Ink's
+  // useInput intact (most macOS / Linux setups).
   if (key.input === "\x1b[A") return { ...key, upArrow: true, input: "" };
   if (key.input === "\x1b[B") return { ...key, downArrow: true, input: "" };
   if (key.input === "\x1b[C") return { ...key, rightArrow: true, input: "" };
   if (key.input === "\x1b[D") return { ...key, leftArrow: true, input: "" };
+  // ESC-stripped fallbacks — Windows PowerShell + ConPTY routes the
+  // leading `\x1b` of a CSI through Ink's parse-keypress, which
+  // consumes it. The remaining `[A` / `[B` / `[C` / `[D` lands in
+  // `input` as plain text. Without these fallbacks, pressing the
+  // arrow key on those terminals inserts the literal `[C` into the
+  // user's prompt buffer instead of moving the cursor — which is
+  // exactly the "right arrow can't cross newline boundary" symptom
+  // (the keystroke wasn't moving anything; it was typing characters).
+  if (key.input === "[A") return { ...key, upArrow: true, input: "" };
+  if (key.input === "[B") return { ...key, downArrow: true, input: "" };
+  if (key.input === "[C") return { ...key, rightArrow: true, input: "" };
+  if (key.input === "[D") return { ...key, leftArrow: true, input: "" };
   return key;
 }
 

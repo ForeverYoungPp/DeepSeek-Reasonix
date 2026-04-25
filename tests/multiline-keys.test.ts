@@ -210,6 +210,19 @@ describe("processMultilineKey — cursor motion", () => {
     expect(processMultilineKey("abc", 2, { input: "\x1b[D" }).cursor).toBe(1);
   });
 
+  it("ESC-stripped arrow fallbacks (`[C`, `[D`, `[A`, `[B`) — Windows ConPTY case", () => {
+    // PowerShell + ConPTY consumes the leading \x1b and routes the
+    // remaining `[C` through useInput as plain text. Without the
+    // ESC-less fallback, pressing right-arrow at end of a line would
+    // insert literal `[C` instead of moving the cursor across the
+    // newline boundary — which surfaced as "right arrow can't reach
+    // line 2" on Windows.
+    expect(processMultilineKey("ab\ncd", 2, { input: "[C" }).cursor).toBe(3);
+    expect(processMultilineKey("ab\ncd", 3, { input: "[D" }).cursor).toBe(2);
+    expect(processMultilineKey("", 0, { input: "[A" }).historyHandoff).toBe("prev");
+    expect(processMultilineKey("", 0, { input: "[B" }).historyHandoff).toBe("next");
+  });
+
   it("↑ moves cursor to the previous line, preserving column when possible", () => {
     //  line 0: "hello" (cols 0-5)
     //  line 1: "world" (cols 0-5)
