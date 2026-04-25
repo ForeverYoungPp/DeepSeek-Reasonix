@@ -28,12 +28,18 @@ export function RecordView({ rec, compact = false }: RecordViewProps) {
   const toolContentMax = compact ? 200 : 400;
 
   if (rec.role === "user") {
+    // Continuation indent of 6 spaces matches the `you › ` prefix width
+    // so wrapped multi-line user messages align under the body text
+    // instead of jumping to column 0.
+    const content = rec.content.includes("\n")
+      ? rec.content.split("\n").join("\n      ")
+      : rec.content;
     return (
       <Box marginTop={1}>
         <Text bold color="cyan">
           you ›{" "}
         </Text>
-        <Text>{rec.content}</Text>
+        <Text>{content}</Text>
       </Box>
     );
   }
