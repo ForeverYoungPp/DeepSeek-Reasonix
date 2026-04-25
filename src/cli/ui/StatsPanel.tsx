@@ -159,16 +159,13 @@ export function StatsPanel({
   const coldStart = summary.turns <= COLD_START_TURNS;
 
   return (
-    // Explicit `width={columns}` pins the border frame to the exact
-    // terminal width. Without this, Ink auto-flexes the Box to
-    // container width, and on terminal resize the prior frame's
-    // wrapped-overflow can leave tails in the scrollback (each
-    // redraw stacks a slightly-wider-or-narrower frame). Fixing
-    // width per-render doesn't eliminate the underlying Ink
-    // limitation (eraseLines counts logical rows, not post-wrap
-    // display rows) but makes each frame's dimensions exact so
-    // there's no residual uncertainty in the erase.
-    <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1} width={columns}>
+    // Borderless layout: no `borderStyle`, no rounded box, no `width={cols}`
+    // pinning. Bordered Boxes were the most visible amplifier of Ink's
+    // eraseLines miscount on Windows terminals — every miscounted render
+    // pushed a top-border frame into scrollback. Without a border there
+    // is nothing visually obvious to duplicate; visual structure comes
+    // from the gradient wordmark + colored pills + a top/bottom margin.
+    <Box flexDirection="column" paddingX={1} marginBottom={1}>
       <Header
         model={model}
         prefixHash={prefixHash}

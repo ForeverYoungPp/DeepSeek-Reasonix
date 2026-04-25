@@ -44,7 +44,7 @@ function PlanConfirmInner({ plan, steps, summary, onChoose }: PlanConfirmProps) 
     /^#{1,6}\s*(待确认|开放问题|风险|未知|假设|不确定)/im.test(plan);
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginY={1}>
+    <Box flexDirection="column" paddingX={1} marginY={1}>
       <Box flexDirection="column">
         <Box>
           <Text bold color="cyan">

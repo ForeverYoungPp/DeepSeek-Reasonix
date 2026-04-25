@@ -35,7 +35,7 @@ export interface ShellConfirmProps {
 export function ShellConfirm({ command, allowPrefix, kind, onChoose }: ShellConfirmProps) {
   const isBackground = kind === "run_background";
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="red" paddingX={1} marginY={1}>
+    <Box flexDirection="column" paddingX={1} marginY={1}>
       <Box>
         <Text bold color="red">
           {isBackground

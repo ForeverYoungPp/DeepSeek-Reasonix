@@ -274,7 +274,7 @@ export const EventRow = React.memo(function EventRow({
   }
   if (event.role === "plan") {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginY={1}>
+      <Box flexDirection="column" paddingX={1} marginY={1}>
         <Box>
           <Text bold color="cyan">
             {"📋 plan proposed — pick a choice below"}
@@ -331,7 +331,7 @@ export const EventRow = React.memo(function EventRow({
     // (the picker pattern uses › for "next up").
     const nextStep = rp.steps.find((s) => !completedSet.has(s.id));
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginY={1}>
+      <Box flexDirection="column" paddingX={1} marginY={1}>
         <Box flexDirection="column">
           <Box>
             <Text bold color="cyan">
@@ -362,7 +362,7 @@ export const EventRow = React.memo(function EventRow({
     );
     const navHint = r.total > 1 ? ` · ${r.index}/${r.total}` : "";
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} marginY={1}>
+      <Box flexDirection="column" paddingX={1} marginY={1}>
         <Box flexDirection="column">
           <Box>
             <Text bold dimColor>

@@ -66,8 +66,8 @@ export function ModeStatusBar({
   if (planMode) {
     return (
       <Box paddingX={1}>
-        <Text color="red" bold inverse={flash}>
-          {"▸ PLAN"}
+        <Text backgroundColor="red" color="white" bold>
+          {flash ? " ◆ PLAN " : " PLAN "}
         </Text>
         <Text dimColor>
           {"  writes gated — submit_plan + approval required  ·  /plan off to leave"}
@@ -76,8 +76,8 @@ export function ModeStatusBar({
       </Box>
     );
   }
-  const label = editMode === "auto" ? "AUTO" : "review";
-  const color = editMode === "auto" ? "magenta" : "cyan";
+  const label = editMode === "auto" ? "AUTO" : "REVIEW";
+  const bgColor = editMode === "auto" ? "magenta" : "cyan";
   const mid =
     editMode === "auto"
       ? undoArmed
@@ -89,8 +89,8 @@ export function ModeStatusBar({
   const flip = editMode === "auto" ? "Shift+Tab → review" : "Shift+Tab → AUTO";
   return (
     <Box paddingX={1}>
-      <Text color={color} bold inverse={flash}>
-        {`▸ ${label}`}
+      <Text backgroundColor={bgColor} color="white" bold>
+        {flash ? ` ◆ ${label} ` : ` ${label} `}
       </Text>
       <Text dimColor>{`  ${mid}  ·  ${flip}`}</Text>
       {jobsTag}
@@ -116,7 +116,7 @@ export function UndoBanner({
   const ok = banner.results.filter((r) => r.status === "applied" || r.status === "created").length;
   const total = banner.results.length;
   return (
-    <Box marginY={1} borderStyle="round" borderColor="magenta" paddingX={1}>
+    <Box marginY={1} paddingX={1}>
       <Text color="magenta" bold>
         {"✓ auto-applied "}
       </Text>

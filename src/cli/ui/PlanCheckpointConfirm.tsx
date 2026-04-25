@@ -50,7 +50,7 @@ function PlanCheckpointConfirmInner({
   const isLast = total > 0 && completed >= total;
   const statuses = buildStatusMap(steps, completedStepIds, stepId, isLast);
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1} marginY={1}>
+    <Box flexDirection="column" paddingX={1} marginY={1}>
       <Box>
         <Text bold color="green">
           ▸ checkpoint — step done

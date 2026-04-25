@@ -313,19 +313,14 @@ export function PromptInput({
   const showHugeBufferHints = lines.length > 20;
 
   return (
-    // Explicit `width={cols}` pins the Box to the exact terminal width.
-    // Without it, Ink auto-flexes children — long CJK input (Chinese
-    // chars are 2 cells wide) can overflow the terminal column count
-    // and trigger Ink's eraseLines miscount, which leaves ghost top
-    // borders stacking in scrollback every ticker tick. Same fix
-    // StatsPanel applies for the header frame.
-    <Box
-      borderStyle="round"
-      borderColor={borderColor}
-      paddingX={1}
-      flexDirection="column"
-      width={cols}
-    >
+    // Borderless layout. Bordered Boxes amplify Ink's eraseLines
+    // miscount on fragile Windows terminals — every render that wraps
+    // pushes a ghost top-border into scrollback. Without a border the
+    // visual hierarchy comes from the bold colored prefix (`you ›`)
+    // and the cursor block; row-by-row stacking via `flexDirection`
+    // gives multi-line composition the same shape it had inside the
+    // box.
+    <Box paddingX={1} flexDirection="column">
       {renderItems.map((item, renderIdx) => {
         if (item.kind === "skip") {
           return (

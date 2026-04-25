@@ -53,7 +53,7 @@ function ChoiceConfirmInner({ question, options, allowCustom, onChoose }: Choice
   });
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} marginY={1}>
+    <Box flexDirection="column" paddingX={1} marginY={1}>
       <Box>
         <Text bold color="magenta">
           🔀 the model is asking you to pick

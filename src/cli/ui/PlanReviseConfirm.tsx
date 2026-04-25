@@ -81,7 +81,7 @@ function PlanReviseConfirmInner({
   const addedCount = rows.filter((r) => r.kind === "added").length;
   const keptCount = rows.filter((r) => r.kind === "kept").length;
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginY={1}>
+    <Box flexDirection="column" paddingX={1} marginY={1}>
       <Box>
         <Text bold color="yellow">
           ✏ plan revision proposed

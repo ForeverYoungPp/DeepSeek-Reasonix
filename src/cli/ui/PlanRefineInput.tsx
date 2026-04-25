@@ -82,7 +82,7 @@ export function PlanRefineInput({ mode, onSubmit, onCancel }: PlanRefineInputPro
           : " (Enter with blank = ask the model to list concrete questions.)";
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginY={1}>
+    <Box flexDirection="column" paddingX={1} marginY={1}>
       <Box>
         <Text bold color="yellow">
           {title}

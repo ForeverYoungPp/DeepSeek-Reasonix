@@ -134,7 +134,7 @@ export function EditConfirm({ block, onChoose }: EditConfirmProps) {
   const showScrollHud = hiddenAbove + hiddenBelow > 0;
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginY={1}>
+    <Box flexDirection="column" paddingX={1} marginY={1}>
       <Box>
         <Text bold color="yellow">
           {"▸ model wants to edit a file"}
