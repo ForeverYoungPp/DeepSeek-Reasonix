@@ -30,7 +30,7 @@ export interface SingleSelectProps<V extends string> {
   onCancel?: () => void;
   /**
    * Optional footer rendered dim beneath the list, e.g.
-   * `"↑/↓ navigate · Enter select · Esc cancel"`. Makes keyboard
+   * `"[↑↓] navigate · [Enter] select · [Esc] cancel"`. Makes keyboard
    * affordances discoverable — otherwise new users hit `y`/`n` and
    * wonder why nothing happens.
    */
@@ -87,7 +87,7 @@ export interface MultiSelectProps<V extends string> {
   initialSelected?: V[];
   onSubmit: (values: V[]) => void;
   onCancel?: () => void;
-  /** Footer hint under the list — e.g. "space toggle · enter confirm". */
+  /** Footer hint under the list — e.g. "[Space] toggle · [Enter] confirm". */
   footer?: string;
 }
 

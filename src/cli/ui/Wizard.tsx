@@ -97,7 +97,7 @@ export function Wizard({ onComplete, onCancel, existingApiKey, initial }: Wizard
           }}
         />
         <Box marginTop={1}>
-          <Text dimColor>↑/↓ move · enter confirm · esc cancel</Text>
+          <Text dimColor>[↑↓] navigate · [Enter] confirm · [Esc] cancel</Text>
         </Box>
       </StepFrame>
     );
@@ -115,7 +115,7 @@ export function Wizard({ onComplete, onCancel, existingApiKey, initial }: Wizard
             const needsArgs = selected.some((name) => CATALOG_BY_NAME.get(name)?.userArgs);
             setStep(needsArgs ? "mcpArgs" : "review");
           }}
-          footer="↑/↓ move · space toggle · enter confirm · esc cancel · leave empty to skip"
+          footer="[↑↓] navigate  ·  [Space] toggle  ·  [Enter] confirm  ·  [Esc] cancel  ·  empty = skip"
         />
       </StepFrame>
     );
@@ -174,7 +174,7 @@ export function Wizard({ onComplete, onCancel, existingApiKey, initial }: Wizard
             </Box>
           ) : null}
           <Box marginTop={1}>
-            <Text dimColor>enter save · esc cancel</Text>
+            <Text dimColor>[Enter] save · [Esc] cancel</Text>
           </Box>
         </Box>
         <ReviewConfirm
@@ -213,7 +213,7 @@ export function Wizard({ onComplete, onCancel, existingApiKey, initial }: Wizard
         <Text>Run `reasonix` any time to start chatting — your settings are remembered.</Text>
       </Box>
       <Box marginTop={1}>
-        <Text dimColor>Press enter to exit.</Text>
+        <Text dimColor>[Enter] to exit</Text>
       </Box>
       <ExitOnEnter onExit={exit} />
     </Box>

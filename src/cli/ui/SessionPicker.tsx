@@ -48,7 +48,7 @@ export function SessionPicker({
         onSubmit={(v) => onChoose(v as SessionChoice)}
       />
       <Box marginTop={1}>
-        <Text dimColor>↑↓ to move · Enter to pick</Text>
+        <Text dimColor>[↑↓] navigate · [Enter] select</Text>
       </Box>
     </Box>
   );
