@@ -4,10 +4,13 @@
  * Handles the subset that actually shows up in LLM answers:
  *   - ATX headers (# ##)
  *   - Unordered / ordered lists
- *   - Fenced code blocks (```lang)
- *   - Inline **bold**, *italic*, `code`
+ *   - Task lists (- [ ] / - [x])
+ *   - Blockquotes (> …) — rendered with a left bar; nested / list-in-quote OK
+ *   - Fenced code blocks (```lang) — diagram langs get a distinct frame
+ *   - Inline **bold**, *italic*, `code`, ~~strikethrough~~
+ *   - GFM emoji shortcodes (:smile: :heart: :+1: …) — curated set
  *   - Paragraphs separated by blank lines
- *   - LaTeX delimiters are stripped (\( \), \[ \], \boxed{X})
+ *   - LaTeX delimiters stripped (\( \), \[ \], \boxed{X}); $…$ / $$…$$ too
  *
  * The goal is not TeX-perfect math — it's "stop showing raw backslashes to
  * the user." When the model insists on LaTeX, we strip the scaffolding and
@@ -63,7 +66,22 @@ function toSubscript(s: string): string {
 export function stripMath(s: string): string {
   return (
     s
-      // Delimiters
+      // Dollar-delimited math (KaTeX / MathJax convention). Block
+      // `$$…$$` is unambiguous — strip the delimiters, wrap content
+      // in double newlines so parseBlocks surfaces it as its own
+      // paragraph instead of folding it into adjacent prose. Must
+      // run BEFORE inline `$…$` so the block regex gets first crack.
+      .replace(/\$\$([\s\S]+?)\$\$/g, (_m, c: string) => `\n\n${c.trim()}\n\n`)
+      // Inline `$…$` is only stripped when a non-space char sits
+      // immediately inside EACH dollar. That rules out:
+      //   - prices: `$5 per unit` (no closing $)
+      //   - `$5 and $10`           (content ends/starts with space)
+      //   - `echo $HOME`           (no closing $)
+      //   - `$ prompt`             (space after open $)
+      // The lookbehind/lookahead on `$` also keeps us from eating
+      // half of a `$$…$$` pair that the block regex somehow missed.
+      .replace(/(?<!\$)\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\$)/g, "$1")
+      // LaTeX delimiters
       .replace(/\\\(\s*/g, "")
       .replace(/\s*\\\)/g, "")
       .replace(/\\\[\s*/g, "\n")
@@ -95,12 +113,19 @@ export function stripMath(s: string): string {
       .replace(/\\geq/g, "≥")
       .replace(/\\neq/g, "≠")
       .replace(/\\approx/g, "≈")
-      .replace(/\\in\b/g, "∈")
-      .replace(/\\notin\b/g, "∉")
+      // Use `(?![a-zA-Z])` instead of `\b` because LaTeX commands
+      // often abut subscript/superscript markers: `\sum_{i=1}^n`,
+      // `\int_0^1`, etc. `\b` only fires between a word char and a
+      // non-word char, but `_` IS a word char, so `\b` silently
+      // refuses to match. The catch-all `\\[a-zA-Z]+` at the bottom
+      // would then eat `\sum` to empty — losing the Σ entirely.
+      // Lookahead-for-non-letter is the right fence: end of command.
+      .replace(/\\in(?![a-zA-Z])/g, "∈")
+      .replace(/\\notin(?![a-zA-Z])/g, "∉")
       .replace(/\\infty/g, "∞")
-      .replace(/\\sum\b/g, "Σ")
-      .replace(/\\prod\b/g, "Π")
-      .replace(/\\int\b/g, "∫")
+      .replace(/\\sum(?![a-zA-Z])/g, "Σ")
+      .replace(/\\prod(?![a-zA-Z])/g, "Π")
+      .replace(/\\int(?![a-zA-Z])/g, "∫")
       // Greek letters
       .replace(/\\alpha/g, "α")
       .replace(/\\beta/g, "β")
@@ -114,9 +139,9 @@ export function stripMath(s: string): string {
       .replace(/\\phi/g, "φ")
       .replace(/\\omega/g, "ω")
       // Arrows / logic
-      .replace(/\\implies\b/g, "⇒")
-      .replace(/\\iff\b/g, "⇔")
-      .replace(/\\to\b/g, "→")
+      .replace(/\\implies(?![a-zA-Z])/g, "⇒")
+      .replace(/\\iff(?![a-zA-Z])/g, "⇔")
+      .replace(/\\to(?![a-zA-Z])/g, "→")
       .replace(/\\rightarrow/g, "→")
       .replace(/\\Rightarrow/g, "⇒")
       .replace(/\\leftarrow/g, "←")
@@ -130,7 +155,27 @@ export function stripMath(s: string): string {
       .replace(/\\;/g, " ")
       .replace(/\\!/g, "")
       .replace(/\\\\/g, "\n")
-      // Superscripts / subscripts — single token or {braced group of [\w+-]}
+      // Pandoc-style inline super/subscripts — `x^2^` for superscript,
+      // `H~2~O` for subscript. Handled HERE (not in INLINE_RE) because
+      // the only useful rendering for a terminal is Unicode
+      // super/subscript characters, which live in the same transform
+      // pipeline as the LaTeX ^/_ rules below.
+      //
+      // Policy: only convert when EVERY character inside the markers
+      // maps to a Unicode super/subscript glyph. `^2^` → `²` (good),
+      // but `^foo^` can't be truly superscripted, so we leave the
+      // whole thing literal rather than dropping the markers and
+      // losing the model's intent. Guards on `~` use lookaround so
+      // the subscript rule never fires inside a `~~strikethrough~~`.
+      .replace(/\^([A-Za-z0-9+\-]+)\^/g, (m, g: string) => {
+        for (const c of g) if (SUPERSCRIPT[c] === undefined) return m;
+        return toSuperscript(g);
+      })
+      .replace(/(?<!~)~(?!~)([A-Za-z0-9+\-]+)~(?!~)/g, (m, g: string) => {
+        for (const c of g) if (SUBSCRIPT[c] === undefined) return m;
+        return toSubscript(g);
+      })
+      // LaTeX super/subscripts — single token or {braced group of [\w+-]}
       .replace(/\^\{([\w+-]+)\}/g, (_m, g: string) => toSuperscript(g))
       .replace(/\^([0-9+\-n])/g, (_m, g: string) => toSuperscript(g))
       .replace(/_\{([\w+-]+)\}/g, (_m, g: string) => toSubscript(g))
@@ -144,6 +189,154 @@ export function stripMath(s: string): string {
       // Collapse multiple whitespace introduced by the stripping above.
       .replace(/[ \t]{2,}/g, " ")
   );
+}
+
+/**
+ * GFM emoji shortcode table. Curated ~70 entries covering what LLMs
+ * actually emit in chat — faces, hearts, gestures, common signals
+ * (✅ ❌ ⚠️), tech / productivity glyphs, a handful of weather and
+ * objects. We deliberately skip flags (region codes, rarely used)
+ * and the long tail.
+ *
+ * Unknown shortcodes pass through as literal `:name:` — safer than
+ * guessing, and prevents false positives like `file.ts:10:` or a
+ * `:classname:` in code from turning into garbage.
+ */
+const EMOJI_MAP: Record<string, string> = {
+  // faces
+  smile: "😄",
+  smiley: "😃",
+  grin: "😁",
+  grinning: "😀",
+  joy: "😂",
+  laughing: "😆",
+  heart_eyes: "😍",
+  blush: "😊",
+  sunglasses: "😎",
+  thinking: "🤔",
+  neutral_face: "😐",
+  confused: "😕",
+  cry: "😢",
+  sob: "😭",
+  rage: "😡",
+  angry: "😠",
+  scream: "😱",
+  wink: "😉",
+  kissing_heart: "😘",
+  // hearts
+  heart: "❤️",
+  orange_heart: "🧡",
+  yellow_heart: "💛",
+  green_heart: "💚",
+  blue_heart: "💙",
+  purple_heart: "💜",
+  black_heart: "🖤",
+  white_heart: "🤍",
+  broken_heart: "💔",
+  sparkling_heart: "💖",
+  two_hearts: "💕",
+  // gestures
+  "+1": "👍",
+  "-1": "👎",
+  thumbsup: "👍",
+  thumbsdown: "👎",
+  wave: "👋",
+  clap: "👏",
+  muscle: "💪",
+  ok_hand: "👌",
+  pray: "🙏",
+  fist: "✊",
+  point_up: "☝️",
+  raised_hands: "🙌",
+  handshake: "🤝",
+  // symbols / signals
+  rocket: "🚀",
+  fire: "🔥",
+  star: "⭐",
+  star2: "🌟",
+  sparkles: "✨",
+  boom: "💥",
+  zap: "⚡",
+  tada: "🎉",
+  bulb: "💡",
+  warning: "⚠️",
+  x: "❌",
+  white_check_mark: "✅",
+  heavy_check_mark: "✔️",
+  ballot_box_with_check: "☑️",
+  no_entry: "⛔",
+  question: "❓",
+  exclamation: "❗",
+  bangbang: "‼️",
+  bell: "🔔",
+  mute: "🔕",
+  hundred: "💯",
+  "100": "💯",
+  eyes: "👀",
+  // tech / productivity
+  computer: "💻",
+  iphone: "📱",
+  hammer: "🔨",
+  wrench: "🔧",
+  gear: "⚙️",
+  package: "📦",
+  floppy_disk: "💾",
+  key: "🔑",
+  lock: "🔒",
+  unlock: "🔓",
+  mag: "🔍",
+  memo: "📝",
+  pencil: "✏️",
+  bookmark: "🔖",
+  // charts / time
+  chart_with_upwards_trend: "📈",
+  chart_with_downwards_trend: "📉",
+  bar_chart: "📊",
+  hourglass: "⏳",
+  calendar: "📅",
+  // misc
+  robot: "🤖",
+  ghost: "👻",
+  bug: "🐛",
+  coffee: "☕",
+  beer: "🍺",
+  sun: "☀️",
+  cloud: "☁️",
+  rainbow: "🌈",
+  speech_balloon: "💬",
+  thought_balloon: "💭",
+  construction: "🚧",
+};
+
+/**
+ * GFM autolinks — bare `<url>` / `<email>` shorthand. Rewrite to the
+ * full `[url](url)` form so the existing link-rendering path applies
+ * (blue + underline for external, URL validated for local). Only
+ * unambiguous URL schemes are expanded: http(s) / ftp / mailto.
+ * Anything else stays as literal `<foo>` text — some prose has
+ * angle-bracketed phrases that aren't URLs.
+ */
+export function expandAutolinks(s: string): string {
+  return s.replace(/<((?:https?|ftp|mailto):[^\s<>]+)>/g, "[$1]($1)");
+}
+
+/**
+ * Expand `:name:` GFM emoji shortcodes via {@link EMOJI_MAP}. The
+ * regex matches broadly (letters / digits / `+` / `_` / `-`) so
+ * `:+1:` works, but the ultimate gate is the map lookup — unknown
+ * names stay literal. That's what keeps `file.ts:10:` and
+ * `:classname:` from being mangled.
+ */
+export function expandEmoji(s: string): string {
+  // Character class covers the whole GFM shortcode alphabet
+  // (letters, digits, `_`, `+`, `-`). The leading `-` slot is
+  // needed so `:-1:` resolves; putting it at the end of the class
+  // keeps it literal. The map lookup is the true gate — unknown
+  // names pass through untouched, so false-positive regex matches
+  // in prose / code don't corrupt the text.
+  return s.replace(/:([a-z0-9_+-]+):/gi, (m, name: string) => {
+    return EMOJI_MAP[name.toLowerCase()] ?? m;
+  });
 }
 
 /**
@@ -230,10 +423,35 @@ export function validateCitation(url: string, projectRoot: string): CitationStat
 }
 
 /**
+ * Heuristic: should this link URL be treated as a repo-file citation
+ * (and thus validated / marked red-strikethrough if missing)? The
+ * point is to STOP flagging things that obviously aren't paths —
+ * otherwise users see a red "broken citations" box for content the
+ * model wrote legitimately:
+ *   - `#anchor` — in-page anchor jump (not a file ref)
+ *   - `url` / `path` — placeholder words in demo text
+ *   - `/` — bare root
+ * Rule: must contain a path separator, a dot, OR a `#` with a non-
+ * bare-anchor prefix. Those are the shapes real file references use.
+ */
+export function shouldValidateAsCitation(url: string): boolean {
+  // Anchor-only: `#foo` / `#` — page-local, not a file
+  if (url.startsWith("#")) return false;
+  // Bare root placeholders
+  if (url === "/" || url === "\\" || url === "") return false;
+  // Must look like a path: contains `/`, `\`, or `.` somewhere
+  if (!/[/\\.]/.test(url)) return false;
+  return true;
+}
+
+/**
  * Pre-scan rendered text for every `[text](url)` link, validate the
  * citation-shaped ones, and cache the result. Done once per Markdown
  * mount so InlineMd doesn't re-stat the filesystem on every keystroke
- * during streaming. External links short-circuit (no fs work).
+ * during streaming. External links short-circuit (no fs work);
+ * non-citation-shaped URLs are skipped entirely (left as default
+ * cyan-underline link rendering) so placeholders in demo prose don't
+ * clutter the broken-citation summary with false positives.
  */
 export function collectCitations(text: string, projectRoot: string): CitationMap {
   const map: CitationMap = new Map();
@@ -241,6 +459,7 @@ export function collectCitations(text: string, projectRoot: string): CitationMap
   for (const m of text.matchAll(re)) {
     const url = m[2] ?? "";
     if (!url || isExternalUrl(url)) continue;
+    if (!shouldValidateAsCitation(url)) continue;
     if (map.has(url)) continue;
     map.set(url, validateCitation(url, projectRoot));
   }
@@ -264,7 +483,7 @@ export function collectCitations(text: string, projectRoot: string): CitationMap
  * `parseBlocks`.
  */
 const INLINE_RE =
-  /(\[([^\]\n]+)\]\(([^)\n]+)\)|\*\*([^*\n]+?)\*\*|```([^\n]+?)```|`([^`\n]+?)`|(?<![*\w])\*([^*\n]+?)\*(?!\w))/g;
+  /(\[([^\]\n]+)\]\(([^)\n]+)\)|\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|```([^\n]+?)```|`([^`\n]+?)`|~~([^~\n]+?)~~|(?<![*\w])\*([^*\n]+?)\*(?!\w)|\\([*_~`[\](){}#+\-.!\\]))/g;
 
 function InlineMd({
   text,
@@ -285,10 +504,13 @@ function InlineMd({
     }
     // Groups, in the order they appear in INLINE_RE:
     //   m[2] = link text          m[3] = link url
-    //   m[4] = bold content (inside ** **)
-    //   m[5] = triple-backtick content (strip leading lang tag)
-    //   m[6] = single-backtick inline code
-    //   m[7] = italic content (inside * *)
+    //   m[4] = bold-italic content (inside *** ***)
+    //   m[5] = bold content (inside ** **)
+    //   m[6] = triple-backtick content (strip leading lang tag)
+    //   m[7] = single-backtick inline code
+    //   m[8] = strikethrough content (inside ~~ ~~)
+    //   m[9] = italic content (inside * *)
+    //   m[10] = backslash-escaped char (emit as literal)
     if (m[2] !== undefined && m[3] !== undefined) {
       const linkText = m[2];
       const url = m[3];
@@ -316,31 +538,49 @@ function InlineMd({
       }
     } else if (m[4] !== undefined) {
       parts.push(
-        <Text key={`b${idx++}`} bold>
+        <Text key={`bi${idx++}`} bold italic>
           {m[4]}
         </Text>,
       );
     } else if (m[5] !== undefined) {
+      parts.push(
+        <Text key={`b${idx++}`} bold>
+          {m[5]}
+        </Text>,
+      );
+    } else if (m[6] !== undefined) {
       // One-line fenced span: ```bash echo hi``` → drop the "bash "
       // language tag so the user doesn't see it rendered in code color.
-      const stripped = m[5].replace(/^(\w+)\s+/, "");
+      const stripped = m[6].replace(/^(\w+)\s+/, "");
       parts.push(
         <Text key={`c${idx++}`} color="yellow">
           {stripped}
         </Text>,
       );
-    } else if (m[6] !== undefined) {
-      parts.push(
-        <Text key={`c${idx++}`} color="yellow">
-          {m[6]}
-        </Text>,
-      );
     } else if (m[7] !== undefined) {
       parts.push(
-        <Text key={`i${idx++}`} italic>
+        <Text key={`c${idx++}`} color="yellow">
           {m[7]}
         </Text>,
       );
+    } else if (m[8] !== undefined) {
+      parts.push(
+        <Text key={`s${idx++}`} strikethrough dimColor>
+          {m[8]}
+        </Text>,
+      );
+    } else if (m[9] !== undefined) {
+      parts.push(
+        <Text key={`i${idx++}`} italic>
+          {m[9]}
+        </Text>,
+      );
+    } else if (m[10] !== undefined) {
+      // Backslash escape — emit the escaped char as a plain Text node
+      // so the subsequent pass of the regex engine doesn't re-interpret
+      // the `*` / `` ` `` / `~` as markup. The `\` is dropped; only the
+      // escaped char survives.
+      parts.push(<Text key={`esc${idx++}`}>{m[10]}</Text>);
     }
     last = start + m[0].length;
   }
@@ -367,12 +607,37 @@ function InlineMd({
  * length includes invisible markup chars.
  */
 export function stripInlineMarkup(s: string): string {
-  return s
-    .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, "$1")
-    .replace(/\*\*([^*\n]+?)\*\*/g, "$1")
-    .replace(/```([^\n]+?)```/g, (_m, c: string) => c.replace(/^(\w+)\s+/, ""))
-    .replace(/`([^`\n]+?)`/g, "$1")
-    .replace(/(?<![*\w])\*([^*\n]+?)\*(?!\w)/g, "$1");
+  // Single-pass strip using INLINE_RE so alternation precedence exactly
+  // matches the runtime renderer. The prior implementation chained
+  // sequential .replace() calls, which broke backslash escapes — the
+  // inline-code regex would eat `\`code\`` as a `code\`` span before
+  // the escape pass got a chance to neutralize each `\``.
+  return s.replace(
+    INLINE_RE,
+    (
+      match: string,
+      _alt: string,
+      linkText: string | undefined,
+      _url: string | undefined,
+      boldItalic: string | undefined,
+      bold: string | undefined,
+      code3: string | undefined,
+      code1: string | undefined,
+      strike: string | undefined,
+      italic: string | undefined,
+      escapeChar: string | undefined,
+    ) => {
+      if (linkText !== undefined) return linkText;
+      if (boldItalic !== undefined) return boldItalic;
+      if (bold !== undefined) return bold;
+      if (code3 !== undefined) return code3.replace(/^(\w+)\s+/, "");
+      if (code1 !== undefined) return code1;
+      if (strike !== undefined) return strike;
+      if (italic !== undefined) return italic;
+      if (escapeChar !== undefined) return escapeChar;
+      return match;
+    },
+  );
 }
 
 /**
@@ -392,11 +657,34 @@ interface HeadingBlock {
   level: number;
   text: string;
 }
+/**
+ * One bullet-list item. `task` marks GFM task-list entries:
+ *   - `- [ ] do the thing` → `{ text: "do the thing", task: "todo" }`
+ *   - `- [x] shipped`      → `{ text: "shipped",      task: "done" }`
+ * Regular bullets leave `task` undefined.
+ */
+export interface BulletItem {
+  text: string;
+  task?: "done" | "todo";
+}
 interface BulletBlock {
   kind: "bullet";
-  items: string[];
+  items: BulletItem[];
   ordered: boolean;
   start: number;
+}
+interface BlockquoteBlock {
+  kind: "quote";
+  /**
+   * Parsed child blocks. After stripping one `>` prefix from each
+   * gathered line, the remainder is re-fed through `parseBlocks` so
+   * block-level constructs inside the quote (nested `>>` quotes,
+   * lists, code fences, tables, …) render with their normal
+   * formatting instead of as flattened text. Nesting depth is
+   * whatever the markdown source expresses — the recursion closes
+   * naturally when no line starts with `>` at its current level.
+   */
+  children: Block[];
 }
 interface CodeBlock {
   kind: "code";
@@ -436,6 +724,7 @@ type Block =
   | ParagraphBlock
   | HeadingBlock
   | BulletBlock
+  | BlockquoteBlock
   | CodeBlock
   | HrBlock
   | EditBlockView
@@ -444,7 +733,12 @@ type Block =
 export function parseBlocks(raw: string): Block[] {
   const lines = raw.split(/\r?\n/);
   const out: Block[] = [];
-  let para: string[] = [];
+  // Each entry is one source line inside the current paragraph plus
+  // the hard-break flag that applies AFTER it. Hard break = trailing
+  // `  ` (two+ spaces before newline) per GFM. The flag decides
+  // whether this line's content joins to the next with `\n` (hard,
+  // preserves visual newline) or ` ` (soft, default paragraph reflow).
+  let para: Array<{ text: string; hardBreak: boolean }> = [];
   let inCode = false;
   let codeLang = "";
   let codeBuf: string[] = [];
@@ -456,10 +750,16 @@ export function parseBlocks(raw: string): Block[] {
   let codeFence = "";
 
   const flushPara = () => {
-    if (para.length) {
-      out.push({ kind: "paragraph", text: para.join(" ") });
-      para = [];
+    if (para.length === 0) return;
+    let joined = "";
+    for (let k = 0; k < para.length; k++) {
+      joined += para[k]!.text;
+      if (k < para.length - 1) {
+        joined += para[k]!.hardBreak ? "\n" : " ";
+      }
     }
+    out.push({ kind: "paragraph", text: joined });
+    para = [];
   };
   const flushList = () => {
     if (listBuf) {
@@ -480,7 +780,7 @@ export function parseBlocks(raw: string): Block[] {
     if (!inCode && /^<{7} SEARCH\s*$/.test(line)) {
       // Filename is the previous non-blank line we just pushed to para.
       // Pull it back out; if there isn't one, treat as literal text.
-      const filename = para.pop()?.trim();
+      const filename = para.pop()?.text.trim();
       if (filename) {
         flushPara();
         flushList();
@@ -508,7 +808,7 @@ export function parseBlocks(raw: string): Block[] {
         }
         // Malformed — no separator or no close. Fall through: put
         // the filename back in the paragraph so we don't lose it.
-        para.push(filename);
+        para.push({ text: filename, hardBreak: false });
       }
     }
 
@@ -664,6 +964,38 @@ export function parseBlocks(raw: string): Block[] {
       }
     }
 
+    // Blockquote: consecutive `>` lines gather into one quote block.
+    // We strip exactly one level of `>` prefix, then recursively run
+    // the inner text through `parseBlocks`. That gets us:
+    //   - Nested `>>` rendering as a quote-in-a-quote (inner `>` is
+    //     still present after the outer strip, so the recursion fires).
+    //   - Lists, code fences, tables inside a quote — all keep their
+    //     normal formatting because parseBlocks handles them again.
+    //   - Blank-`>` lines become paragraph breaks inside the quote.
+    //
+    // We don't implement GFM "lazy continuation" (a line without `>`
+    // after a non-empty quote line is still part of the quote) — LLMs
+    // reliably re-emit `>` on each line, and enforcing the explicit
+    // prefix avoids accidentally swallowing the paragraph that
+    // follows a quote.
+    const quoteMatch = line.match(/^\s*>\s?(.*)$/);
+    if (quoteMatch) {
+      flushPara();
+      flushList();
+      const innerLines: string[] = [quoteMatch[1] ?? ""];
+      let j = i + 1;
+      while (j < lines.length) {
+        const nxt = lines[j]!.replace(/\s+$/g, "");
+        const m = nxt.match(/^\s*>\s?(.*)$/);
+        if (!m) break;
+        innerLines.push(m[1] ?? "");
+        j++;
+      }
+      out.push({ kind: "quote", children: parseBlocks(innerLines.join("\n")) });
+      i = j - 1;
+      continue;
+    }
+
     const bm = line.match(/^\s*[-*+]\s+(.+)$/);
     if (bm) {
       flushPara();
@@ -671,7 +1003,7 @@ export function parseBlocks(raw: string): Block[] {
         flushList();
         listBuf = { kind: "bullet", items: [], ordered: false, start: 1 };
       }
-      listBuf.items.push(bm[1]!);
+      listBuf.items.push(parseBulletItem(bm[1]!));
       continue;
     }
 
@@ -682,12 +1014,18 @@ export function parseBlocks(raw: string): Block[] {
         flushList();
         listBuf = { kind: "bullet", items: [], ordered: true, start: Number(om[1]) };
       }
-      listBuf.items.push(om[2]!);
+      listBuf.items.push(parseBulletItem(om[2]!));
       continue;
     }
 
     flushList();
-    para.push(line);
+    // Hard line break: trailing `  ` (two or more spaces) on the raw
+    // line before whitespace was stripped. Per GFM, this forces a
+    // visible newline inside a paragraph (where soft-wrapped lines
+    // normally join with a space). We stash the flag on THIS line
+    // so flushPara knows whether to emit `\n` or ` ` AFTER it.
+    const hardBreak = / {2,}\r?$/.test(rawLine);
+    para.push({ text: line, hardBreak });
   }
 
   if (inCode && codeBuf.length) {
@@ -696,6 +1034,20 @@ export function parseBlocks(raw: string): Block[] {
   flushPara();
   flushList();
   return out;
+}
+
+/**
+ * GFM task-list prefix sniff: `[ ] …` / `[x] …` / `[X] …` at the start
+ * of a bullet item's text becomes a task entry; anything else stays a
+ * plain item. The bracket form without a trailing space (e.g. `[x]end`)
+ * isn't standard and rarely appears — we require the space to avoid
+ * false positives on array-index-style prose like `[1] see ref`.
+ */
+function parseBulletItem(raw: string): BulletItem {
+  const m = raw.match(/^\[([ xX])\]\s+(.*)$/);
+  if (!m) return { text: raw };
+  const done = m[1]!.toLowerCase() === "x";
+  return { text: m[2] ?? "", task: done ? "done" : "todo" };
 }
 
 function BlockView({ block, citations }: { block: Block; citations?: CitationMap }) {
@@ -707,19 +1059,32 @@ function BlockView({ block, citations }: { block: Block; citations?: CitationMap
         </Text>
       );
     case "paragraph":
-      return <InlineMd text={block.text} citations={citations} />;
+      return <ParagraphView text={block.text} citations={citations} />;
     case "bullet":
       return (
         <Box flexDirection="column">
           {block.items.map((item, i) => (
-            <Box key={`${i}-${item.slice(0, 24)}`}>
-              <Text color="cyan">{block.ordered ? ` ${block.start + i}. ` : "  • "}</Text>
-              <InlineMd text={item} citations={citations} />
+            <Box key={`${i}-${item.text.slice(0, 24)}`}>
+              <Text color={item.task === "done" ? "green" : "cyan"}>
+                {bulletPrefix(block, i, item)}
+              </Text>
+              {item.task === "done" ? (
+                <Text strikethrough dimColor>
+                  <InlineMd text={item.text} citations={citations} />
+                </Text>
+              ) : (
+                <InlineMd text={item.text} citations={citations} />
+              )}
             </Box>
           ))}
         </Box>
       );
+    case "quote":
+      return <BlockquoteView block={block} citations={citations} />;
     case "code":
+      if (DIAGRAM_LANGS.has(block.lang.toLowerCase())) {
+        return <DiagramCodeBlock lang={block.lang} text={block.text} />;
+      }
       return (
         <Box borderStyle="single" borderColor="gray" paddingX={1}>
           <Text color="yellow">{block.text}</Text>
@@ -732,6 +1097,83 @@ function BlockView({ block, citations }: { block: Block; citations?: CitationMap
     case "hr":
       return <Text dimColor>{"────────────────────────"}</Text>;
   }
+}
+
+/**
+ * Paragraph renderer. Plain text goes straight to InlineMd. If the
+ * paragraph carries embedded `\n` (inserted by parseBlocks when it
+ * sees a GFM hard break — trailing `  ` on a source line), split
+ * and render each segment as its own row so the newline is visible
+ * in the terminal. Single-line paragraphs still render as one row
+ * for tight layout.
+ */
+function ParagraphView({ text, citations }: { text: string; citations?: CitationMap }) {
+  if (!text.includes("\n")) {
+    return <InlineMd text={text} citations={citations} />;
+  }
+  const rows = text.split("\n");
+  return (
+    <Box flexDirection="column">
+      {rows.map((row, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: hard-break rows are source-ordered and never reorder
+        <InlineMd key={`ln-${i}`} text={row} citations={citations} />
+      ))}
+    </Box>
+  );
+}
+
+/**
+ * Pick the gutter glyph for a bullet-list item:
+ *   - ordered     → ` N. `
+ *   - task done   → ` ☒ `  (green + struck-through in the caller)
+ *   - task todo   → ` ☐ `
+ *   - plain       → `  • `
+ * Width is stable within a list so text after the prefix stays aligned.
+ */
+function bulletPrefix(block: BulletBlock, i: number, item: BulletItem): string {
+  if (block.ordered) return ` ${block.start + i}. `;
+  if (item.task === "done") return " ☒ ";
+  if (item.task === "todo") return " ☐ ";
+  return "  • ";
+}
+
+/**
+ * Blockquote renderer: left-bar frame (`borderLeft` only, dim) that
+ * wraps any child block content. The bar grows with the rendered
+ * height automatically — no manual per-line prefix — so a quote
+ * containing a list, a code block, or another quote still looks
+ * right regardless of how many rows each child consumes.
+ *
+ * Nested `>>` quotes surface as a BlockquoteView inside another
+ * BlockquoteView, producing two adjacent bars (visually nested).
+ * Inner blocks keep their normal colors (code yellow, bullet cyan,
+ * etc.) — we dim only the bar, not the content, so a code snippet
+ * inside a quote still reads as code.
+ */
+function BlockquoteView({
+  block,
+  citations,
+}: {
+  block: BlockquoteBlock;
+  citations?: CitationMap;
+}) {
+  return (
+    <Box
+      borderStyle="single"
+      borderColor="gray"
+      borderDimColor
+      borderTop={false}
+      borderRight={false}
+      borderBottom={false}
+      paddingLeft={1}
+      flexDirection="column"
+      gap={1}
+    >
+      {block.children.map((child, i) => (
+        <BlockView key={`q-${i}-${child.kind}`} block={child} citations={citations} />
+      ))}
+    </Box>
+  );
 }
 
 /**
@@ -875,8 +1317,66 @@ function EditBlockRow({ block }: { block: EditBlockView }) {
   );
 }
 
+/**
+ * Code-block languages that render as graphs/diagrams in real
+ * browsers but can't be drawn in a terminal. For these we show the
+ * SOURCE with a distinct frame + a header and a "paste into viewer"
+ * hint, so the user knows they're looking at a diagram-source block
+ * rather than executable code.
+ */
+const DIAGRAM_LANGS = new Set([
+  "mermaid",
+  "dot",
+  "graphviz",
+  "plantuml",
+  "puml",
+  "flowchart",
+  "sequencediagram",
+  "gantt",
+  "erdiagram",
+]);
+
+/**
+ * Viewer URL hint keyed by language — shown dim at the bottom of a
+ * diagram-source block so users know where to paste it to see the
+ * actual graph. Fallback is a generic "use the matching viewer" for
+ * less common langs.
+ */
+const DIAGRAM_VIEWER_HINT: Record<string, string> = {
+  mermaid: "→ paste at https://mermaid.live to view",
+  plantuml: "→ paste at https://www.plantuml.com/plantuml to view",
+  puml: "→ paste at https://www.plantuml.com/plantuml to view",
+  dot: "→ paste at https://dreampuf.github.io/GraphvizOnline to view",
+  graphviz: "→ paste at https://dreampuf.github.io/GraphvizOnline to view",
+};
+
+/**
+ * Render a diagram-source code block with a magenta double-line
+ * frame + a `◇ lang diagram (source)` header + a viewer hint
+ * underneath. Distinct from the plain code-block rendering so the
+ * user can tell at a glance that the terminal couldn't draw the
+ * actual graph — they're looking at source to copy out.
+ */
+function DiagramCodeBlock({ lang, text }: { lang: string; text: string }) {
+  const hint =
+    DIAGRAM_VIEWER_HINT[lang.toLowerCase()] ?? "→ render with the matching viewer to view";
+  return (
+    <Box flexDirection="column" borderStyle="double" borderColor="magenta" paddingX={1}>
+      <Text bold color="magenta">
+        {`◇ ${lang} diagram (source — terminal can't draw the graph)`}
+      </Text>
+      <Box marginTop={1}>
+        <Text color="yellow">{text}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text dimColor>{hint}</Text>
+      </Box>
+    </Box>
+  );
+}
+
 export function Markdown({ text, projectRoot }: { text: string; projectRoot?: string }) {
-  const cleaned = stripMath(text);
+  const cleaned = expandAutolinks(expandEmoji(stripMath(text)));
   const root = projectRoot ?? process.cwd();
   const citations = React.useMemo(() => collectCitations(cleaned, root), [cleaned, root]);
   const blocks = React.useMemo(() => parseBlocks(cleaned), [cleaned]);

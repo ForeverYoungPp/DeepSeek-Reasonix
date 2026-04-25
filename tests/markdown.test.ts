@@ -4,9 +4,12 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   collectCitations,
+  expandAutolinks,
+  expandEmoji,
   isExternalUrl,
   parseBlocks,
   parseCitationUrl,
+  shouldValidateAsCitation,
   stripInlineMarkup,
   stripMath,
   validateCitation,
@@ -551,5 +554,458 @@ describe("citation links — parseBlocks regression", () => {
   it("visibleWidth ignores link URL", () => {
     // "see " + "foo" + " here" = 12 visible chars
     expect(visibleWidth("see [foo](path.ts:10) here")).toBe(12);
+  });
+});
+
+describe("parseBlocks — blockquote", () => {
+  it("single `> line` parses to a quote with one paragraph child", () => {
+    const blocks = parseBlocks("> a quoted line");
+    expect(blocks).toHaveLength(1);
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    expect(blocks[0].children).toHaveLength(1);
+    expect(blocks[0].children[0]?.kind).toBe("paragraph");
+    if (blocks[0].children[0]?.kind === "paragraph") {
+      expect(blocks[0].children[0].text).toBe("a quoted line");
+    }
+  });
+
+  it("consecutive `>` lines fold into one paragraph inside the quote", () => {
+    const blocks = parseBlocks(["> first", "> second", "> third"].join("\n"));
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    // Three adjacent `>` lines with no blank separator → one paragraph
+    // (paragraph parser joins with spaces, same as outside a quote).
+    expect(blocks[0].children).toHaveLength(1);
+    if (blocks[0].children[0]?.kind === "paragraph") {
+      expect(blocks[0].children[0].text).toBe("first second third");
+    }
+  });
+
+  it("blank `>` line splits the quote into two paragraph children", () => {
+    const blocks = parseBlocks(["> para 1", ">", "> para 2"].join("\n"));
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    expect(blocks[0].children).toHaveLength(2);
+    expect(blocks[0].children.map((c) => c.kind)).toEqual(["paragraph", "paragraph"]);
+  });
+
+  it("non-`>` line after a quote closes it — following prose becomes its own paragraph", () => {
+    const blocks = parseBlocks(["> quoted", "", "not quoted"].join("\n"));
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]?.kind).toBe("quote");
+    expect(blocks[1]?.kind).toBe("paragraph");
+    if (blocks[1]?.kind === "paragraph") expect(blocks[1].text).toBe("not quoted");
+  });
+
+  it("quote content carries inline markdown (bold, code) through intact", () => {
+    const blocks = parseBlocks("> **important**: call `foo()` first");
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    const child = blocks[0].children[0];
+    if (child?.kind !== "paragraph") throw new Error("unreachable");
+    expect(child.text).toBe("**important**: call `foo()` first");
+  });
+
+  it("`>` with no space before content still parses (GFM-tolerant)", () => {
+    const blocks = parseBlocks(">no space");
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    if (blocks[0].children[0]?.kind === "paragraph") {
+      expect(blocks[0].children[0].text).toBe("no space");
+    }
+  });
+
+  it("nested `> >` becomes a blockquote inside a blockquote", () => {
+    const blocks = parseBlocks(["> outer", ">", "> > inner"].join("\n"));
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    expect(blocks[0].children.map((c) => c.kind)).toEqual(["paragraph", "quote"]);
+    const inner = blocks[0].children[1];
+    if (inner?.kind !== "quote") throw new Error("unreachable");
+    const innerPara = inner.children[0];
+    if (innerPara?.kind !== "paragraph") throw new Error("unreachable");
+    expect(innerPara.text).toBe("inner");
+  });
+
+  it("triple-nested `> > >` produces three levels of quote", () => {
+    const blocks = parseBlocks("> > > deep");
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    const lvl2 = blocks[0].children[0];
+    if (lvl2?.kind !== "quote") throw new Error("unreachable");
+    const lvl3 = lvl2.children[0];
+    if (lvl3?.kind !== "quote") throw new Error("unreachable");
+    const leaf = lvl3.children[0];
+    if (leaf?.kind !== "paragraph") throw new Error("unreachable");
+    expect(leaf.text).toBe("deep");
+  });
+
+  it("list inside a quote parses as a real bullet block, not flattened text", () => {
+    const blocks = parseBlocks(["> - item a", "> - item b"].join("\n"));
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    expect(blocks[0].children).toHaveLength(1);
+    const inner = blocks[0].children[0];
+    if (inner?.kind !== "bullet") throw new Error("unreachable");
+    expect(inner.items.map((x) => x.text)).toEqual(["item a", "item b"]);
+  });
+
+  it("fenced code block inside a quote parses as a real code block", () => {
+    const blocks = parseBlocks(["> ```js", "> const x = 1;", "> ```"].join("\n"));
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    const inner = blocks[0].children[0];
+    if (inner?.kind !== "code") throw new Error("unreachable");
+    expect(inner.lang).toBe("js");
+    expect(inner.text).toBe("const x = 1;");
+  });
+
+  it("mixed content inside a quote: paragraph + list keeps both structured", () => {
+    const src = ["> 引用可以包含其他元素：", ">", "> - 列表项一", "> - 列表项二"].join("\n");
+    const blocks = parseBlocks(src);
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    expect(blocks[0].children.map((c) => c.kind)).toEqual(["paragraph", "bullet"]);
+  });
+
+  it("horizontal rule inside a quote stays as literal `---` (no HR promotion)", () => {
+    // Inside the quote, `> ---` strips to `---` — THAT does match the
+    // HR regex in the recursive parse, so nested HR IS a real thing.
+    // Just checking it's a quote with an hr child (not eaten at the
+    // outer level).
+    const blocks = parseBlocks("> ---");
+    expect(blocks).toHaveLength(1);
+    if (blocks[0]?.kind !== "quote") throw new Error("unreachable");
+    expect(blocks[0].children[0]?.kind).toBe("hr");
+  });
+});
+
+describe("parseBlocks — task lists", () => {
+  it("`- [ ] …` produces a todo item", () => {
+    const blocks = parseBlocks("- [ ] do the thing");
+    if (blocks[0]?.kind !== "bullet") throw new Error("unreachable");
+    expect(blocks[0].items).toHaveLength(1);
+    expect(blocks[0].items[0]).toEqual({ text: "do the thing", task: "todo" });
+  });
+
+  it("`- [x] …` produces a done item", () => {
+    const blocks = parseBlocks("- [x] shipped");
+    if (blocks[0]?.kind !== "bullet") throw new Error("unreachable");
+    expect(blocks[0].items[0]).toEqual({ text: "shipped", task: "done" });
+  });
+
+  it("uppercase `[X]` is also treated as done (case-insensitive)", () => {
+    const blocks = parseBlocks("- [X] uppercase");
+    if (blocks[0]?.kind !== "bullet") throw new Error("unreachable");
+    expect(blocks[0].items[0]?.task).toBe("done");
+  });
+
+  it("mixed tasks and plain bullets coexist in one list", () => {
+    const text = ["- plain item", "- [ ] todo", "- [x] done"].join("\n");
+    const blocks = parseBlocks(text);
+    if (blocks[0]?.kind !== "bullet") throw new Error("unreachable");
+    expect(blocks[0].items).toEqual([
+      { text: "plain item" },
+      { text: "todo", task: "todo" },
+      { text: "done", task: "done" },
+    ]);
+  });
+
+  it("array-index-style prose `[1] ref` does NOT become a task", () => {
+    // Regression: task regex requires a space after the bracket, so
+    // `- [1] ref` is a plain bullet whose item text is "[1] ref".
+    const blocks = parseBlocks("- [1] reference");
+    if (blocks[0]?.kind !== "bullet") throw new Error("unreachable");
+    expect(blocks[0].items[0]).toEqual({ text: "[1] reference" });
+  });
+});
+
+describe("stripMath — $ / $$ delimiters", () => {
+  it("strips inline `$E = mc^2$` to `E = mc²` (delimiter gone, superscript converted)", () => {
+    expect(stripMath("$E = mc^2$")).toBe("E = mc²");
+  });
+
+  it("strips surrounding `$$…$$` on block math and isolates it as its own paragraph", () => {
+    const out = stripMath("prose $$x + y = z$$ more prose");
+    // Block math gets \n\n on each side so parseBlocks later treats
+    // it as its own paragraph instead of folding into prose.
+    expect(out).not.toContain("$$");
+    expect(out).toContain("x + y = z");
+  });
+
+  it("handles `$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$` end-to-end", () => {
+    const out = stripMath("$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$");
+    expect(out).not.toContain("$");
+    expect(out).not.toContain("\\");
+    expect(out).toContain("Σ"); // \sum → Σ
+    expect(out).toContain("(n(n+1))/(2)"); // \frac → ( )/( )
+    expect(out).toContain("ⁿ"); // ^{n} → ⁿ
+  });
+
+  it("does NOT eat a price like `$5 per unit` (no closing $ adjacent to non-space)", () => {
+    expect(stripMath("$5 per unit")).toBe("$5 per unit");
+  });
+
+  it("does NOT eat `$5 and $10` prose (content starts/ends with space at boundaries)", () => {
+    expect(stripMath("$5 and $10 extra")).toBe("$5 and $10 extra");
+  });
+
+  it("does NOT eat a shell var `echo $HOME`", () => {
+    expect(stripMath("echo $HOME")).toBe("echo $HOME");
+  });
+
+  it("leaves `$ prompt:` alone (space immediately after opening $)", () => {
+    expect(stripMath("$ prompt:")).toBe("$ prompt:");
+  });
+
+  it("strips a single-character inline expression `$x$`", () => {
+    // With non-greedy + 1-or-more content, $x$ matches as content `x`.
+    expect(stripMath("$x$")).toBe("x");
+  });
+});
+
+describe("expandEmoji — GFM shortcodes", () => {
+  it(":smile: → 😄", () => {
+    expect(expandEmoji(":smile:")).toBe("😄");
+  });
+
+  it(":+1: and :-1: resolve to thumb emojis", () => {
+    expect(expandEmoji(":+1:")).toBe("👍");
+    expect(expandEmoji(":-1:")).toBe("👎");
+  });
+
+  it("inline prose: `great :fire: job` → `great 🔥 job`", () => {
+    expect(expandEmoji("great :fire: job")).toBe("great 🔥 job");
+  });
+
+  it("unknown shortcode stays literal (no mangling of `:unknown_thing:`)", () => {
+    expect(expandEmoji(":unknown_thing:")).toBe(":unknown_thing:");
+  });
+
+  it("numeric `:10:` stays literal (not in map; protects timestamps / file:line:col)", () => {
+    expect(expandEmoji("file.ts:10: error")).toBe("file.ts:10: error");
+  });
+
+  it("case-insensitive match (`:SMILE:` also resolves)", () => {
+    expect(expandEmoji(":SMILE:")).toBe("😄");
+  });
+
+  it(":100: resolves via the numeric alias", () => {
+    expect(expandEmoji(":100:")).toBe("💯");
+  });
+
+  it("multiple emoji on one line all expand", () => {
+    expect(expandEmoji(":rocket: :fire: :tada:")).toBe("🚀 🔥 🎉");
+  });
+});
+
+describe("inline — bold-italic `***text***`", () => {
+  it("stripInlineMarkup unwraps the whole three-star envelope (no leftover asterisks)", () => {
+    expect(stripInlineMarkup("***both***")).toBe("both");
+  });
+
+  it("visibleWidth counts only the inner text", () => {
+    // "both" = 4 visible chars, `***` markers contribute 0.
+    expect(visibleWidth("***both***")).toBe(4);
+  });
+
+  it("bold-italic coexists with surrounding plain text", () => {
+    expect(stripInlineMarkup("hi ***emphasis*** there")).toBe("hi emphasis there");
+  });
+
+  it("does NOT greedily consume a following `**bold**` on the same line", () => {
+    // Concrete regression: the bold-italic regex is non-greedy and
+    // content excludes `*`, so `***a*** **b**` stays as two distinct
+    // spans with 4 chars visible.
+    expect(stripInlineMarkup("***a*** **b**")).toBe("a b");
+  });
+});
+
+describe("stripMath — Pandoc super/subscript (^text^ / ~text~)", () => {
+  it("`x^2^` → `x²` (all chars convertible)", () => {
+    expect(stripMath("x^2^")).toBe("x²");
+  });
+
+  it("`H~2~O` → `H₂O` (subscript)", () => {
+    expect(stripMath("H~2~O")).toBe("H₂O");
+  });
+
+  it("`a^123^` → `a¹²³` (multi-digit superscript)", () => {
+    expect(stripMath("a^123^")).toBe("a¹²³");
+  });
+
+  it("leaves `^foo^` literal when content has non-convertible chars", () => {
+    // `f`, `o` aren't in SUPERSCRIPT map, so dropping the markers
+    // would lose the model's intent — better to leave literal.
+    expect(stripMath("x^foo^")).toBe("x^foo^");
+  });
+
+  it("subscript rule does NOT fire inside `~~strikethrough~~`", () => {
+    // Both `~` are guarded by (?<!~)(?!~) so `~~text~~` passes through
+    // to the inline parser intact. `text` contains letters → would
+    // fail the conversion guard anyway, but also the outer lookarounds
+    // skip the strikethrough bounds — double protection.
+    expect(stripMath("~~gone~~")).toBe("~~gone~~");
+  });
+
+  it("LaTeX form `H^{2}` still works (handled by the existing {braced} rule)", () => {
+    expect(stripMath("H^{2}O")).toBe("H²O");
+  });
+});
+
+describe("parseBlocks — hard line break (GFM trailing two spaces)", () => {
+  it("a single `  ` hard break injects a `\\n` inside the paragraph text", () => {
+    const src = "line one  \nline two";
+    const blocks = parseBlocks(src);
+    expect(blocks).toHaveLength(1);
+    if (blocks[0]?.kind !== "paragraph") throw new Error("unreachable");
+    expect(blocks[0].text).toBe("line one\nline two");
+  });
+
+  it("without trailing `  ` a soft break still collapses to a space", () => {
+    const src = "line one\nline two";
+    const blocks = parseBlocks(src);
+    if (blocks[0]?.kind !== "paragraph") throw new Error("unreachable");
+    expect(blocks[0].text).toBe("line one line two");
+  });
+
+  it("mixed hard + soft breaks preserve the distinction", () => {
+    // line 1 → hard → line 2 → soft → line 3
+    const src = "line one  \nline two\nline three";
+    const blocks = parseBlocks(src);
+    if (blocks[0]?.kind !== "paragraph") throw new Error("unreachable");
+    expect(blocks[0].text).toBe("line one\nline two line three");
+  });
+
+  it("three trailing spaces also trigger hard break (GFM: two-or-more)", () => {
+    const src = "one   \ntwo";
+    const blocks = parseBlocks(src);
+    if (blocks[0]?.kind !== "paragraph") throw new Error("unreachable");
+    expect(blocks[0].text).toBe("one\ntwo");
+  });
+
+  it("one trailing space is NOT a hard break (two required)", () => {
+    const src = "one \ntwo";
+    const blocks = parseBlocks(src);
+    if (blocks[0]?.kind !== "paragraph") throw new Error("unreachable");
+    expect(blocks[0].text).toBe("one two");
+  });
+});
+
+describe("inline — backslash escapes", () => {
+  it("stripInlineMarkup drops `\\` before punctuation (CommonMark escape)", () => {
+    expect(stripInlineMarkup("\\*not italic\\*")).toBe("*not italic*");
+  });
+
+  it("stripInlineMarkup keeps ``\\``` before backtick", () => {
+    expect(stripInlineMarkup("\\`code\\`")).toBe("`code`");
+  });
+
+  it("escape survives a would-be strikethrough at the edges", () => {
+    // `\~...\~` has only single ~ each side after escape — not strike.
+    expect(stripInlineMarkup("\\~foo\\~")).toBe("~foo~");
+  });
+
+  it("`\\\\` becomes a single literal backslash", () => {
+    expect(stripInlineMarkup("a\\\\b")).toBe("a\\b");
+  });
+
+  it("escape only triggers on markup punctuation — `\\a` stays `\\a`", () => {
+    // `a` isn't in the escape class, so the backslash is preserved.
+    expect(stripInlineMarkup("hi\\a")).toBe("hi\\a");
+  });
+
+  it("visibleWidth skips the `\\` when escape fires", () => {
+    // "\\*not\\*" renders as 5 visible chars: "*not*"
+    expect(visibleWidth("\\*not\\*")).toBe(5);
+  });
+});
+
+describe("expandAutolinks — `<url>` shorthand", () => {
+  it("rewrites `<https://example.com>` to a full `[url](url)`", () => {
+    expect(expandAutolinks("see <https://example.com> now")).toBe(
+      "see [https://example.com](https://example.com) now",
+    );
+  });
+
+  it("rewrites `<mailto:foo@bar.com>`", () => {
+    expect(expandAutolinks("<mailto:test@example.com>")).toBe(
+      "[mailto:test@example.com](mailto:test@example.com)",
+    );
+  });
+
+  it("leaves `<non-url text>` alone (no recognized scheme)", () => {
+    expect(expandAutolinks("<angle-bracketed prose>")).toBe("<angle-bracketed prose>");
+  });
+
+  it("leaves `<kbd>`, `<span>`, and other HTML tags alone", () => {
+    expect(expandAutolinks("<kbd>Ctrl</kbd>")).toBe("<kbd>Ctrl</kbd>");
+  });
+});
+
+describe("shouldValidateAsCitation — citation guard", () => {
+  it("skips anchor-only `#foo` (in-page jump, not a file)", () => {
+    expect(shouldValidateAsCitation("#foo")).toBe(false);
+    expect(shouldValidateAsCitation("#")).toBe(false);
+    expect(shouldValidateAsCitation("#section-1")).toBe(false);
+  });
+
+  it("skips bare `/` and empty", () => {
+    expect(shouldValidateAsCitation("/")).toBe(false);
+    expect(shouldValidateAsCitation("")).toBe(false);
+  });
+
+  it("skips placeholder words without path separators or extensions", () => {
+    expect(shouldValidateAsCitation("url")).toBe(false);
+    expect(shouldValidateAsCitation("placeholder")).toBe(false);
+  });
+
+  it("accepts a real path with slash", () => {
+    expect(shouldValidateAsCitation("src/foo.ts")).toBe(true);
+  });
+
+  it("accepts a file with extension but no slash", () => {
+    expect(shouldValidateAsCitation("README.md")).toBe(true);
+  });
+});
+
+describe("collectCitations — no false positives from anchors / placeholders", () => {
+  it("does NOT add `#anchor` URLs to the citation map (no broken-citation red)", () => {
+    const map = collectCitations("jump to [top](#1-header) here", "/tmp");
+    expect(map.size).toBe(0);
+  });
+
+  it("does NOT add placeholder words like `url` to the map", () => {
+    const map = collectCitations("demo link: [see this](url)", "/tmp");
+    expect(map.size).toBe(0);
+  });
+});
+
+describe("parseBlocks — diagram code blocks (mermaid / dot / plantuml / …)", () => {
+  it("parses a ```mermaid block as a CodeBlock with lang='mermaid'", () => {
+    const src = ["```mermaid", "graph TD", "  A --> B", "```"].join("\n");
+    const blocks = parseBlocks(src);
+    expect(blocks).toHaveLength(1);
+    if (blocks[0]?.kind !== "code") throw new Error("unreachable");
+    expect(blocks[0].lang).toBe("mermaid");
+    expect(blocks[0].text).toBe("graph TD\n  A --> B");
+  });
+
+  it("parses a ```dot block as a CodeBlock (rendering branches on lang at display time)", () => {
+    const src = ["```dot", "digraph G { A -> B }", "```"].join("\n");
+    const blocks = parseBlocks(src);
+    if (blocks[0]?.kind !== "code") throw new Error("unreachable");
+    expect(blocks[0].lang).toBe("dot");
+  });
+});
+
+describe("inline — strikethrough", () => {
+  it("stripInlineMarkup unwraps `~~text~~`", () => {
+    expect(stripInlineMarkup("before ~~gone~~ after")).toBe("before gone after");
+  });
+
+  it("visibleWidth ignores `~~` markers", () => {
+    // "abc" + " " + "xy" = 6 visible chars; `~~` on each side = 0 visible.
+    expect(visibleWidth("abc ~~xy~~")).toBe(6);
+  });
+
+  it("bold, code, and strikethrough can coexist on one line", () => {
+    const input = "**bold** then `code` then ~~gone~~";
+    expect(stripInlineMarkup(input)).toBe("bold then code then gone");
+  });
+
+  it("two strikethroughs on one line are both captured", () => {
+    expect(stripInlineMarkup("~~one~~ and ~~two~~")).toBe("one and two");
   });
 });
