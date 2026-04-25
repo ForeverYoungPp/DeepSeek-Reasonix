@@ -9,7 +9,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { DeepSeekClient } from "../src/client.js";
-import { CacheFirstLoop, isThinkingModeModel, thinkingModeForModel } from "../src/loop.js";
+import {
+  CacheFirstLoop,
+  isThinkingModeModel,
+  stampMissingReasoningForThinkingMode,
+  thinkingModeForModel,
+} from "../src/loop.js";
 import { ImmutablePrefix } from "../src/memory.js";
 import { ToolRegistry } from "../src/tools.js";
 import type { ChatMessage } from "../src/types.js";
@@ -105,6 +110,41 @@ function capturingFetch(responses: FakeResponseShape[]): {
   return { fetch: fn, bodies };
 }
 
+describe("stampMissingReasoningForThinkingMode (session-load heal)", () => {
+  it("stamps empty reasoning_content on assistant turns missing the field for thinking-mode sessions", () => {
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      // Pre-fix session: no reasoning_content attached.
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "again" },
+      { role: "assistant", content: "b", reasoning_content: "kept" },
+    ];
+    const { messages, stampedCount } = stampMissingReasoningForThinkingMode(
+      msgs,
+      "deepseek-reasoner",
+    );
+    expect(stampedCount).toBe(1);
+    expect(messages[1]!.reasoning_content).toBe("");
+    expect(messages[3]!.reasoning_content).toBe("kept");
+  });
+
+  it("no-ops on non-thinking-mode sessions (deepseek-chat stays clean)", () => {
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ];
+    const { messages, stampedCount } = stampMissingReasoningForThinkingMode(msgs, "deepseek-chat");
+    expect(stampedCount).toBe(0);
+    expect(Object.hasOwn(messages[1]!, "reasoning_content")).toBe(false);
+  });
+
+  it("preserves existing empty-string reasoning_content without double-stamping", () => {
+    const msgs: ChatMessage[] = [{ role: "assistant", content: "hi", reasoning_content: "" }];
+    const { stampedCount } = stampMissingReasoningForThinkingMode(msgs, "deepseek-v4-pro");
+    expect(stampedCount).toBe(0);
+  });
+});
+
 describe("R1 reasoning_content round-trip", () => {
   it("preserves reasoning_content on the assistant message when the turn has tool_calls", async () => {
     const tools = new ToolRegistry();
@@ -188,6 +228,67 @@ describe("R1 reasoning_content round-trip", () => {
     const assistant = turn2Messages.find((m) => m.role === "assistant");
     expect(assistant).toBeDefined();
     expect(assistant?.reasoning_content).toBe("reasoning attached to a plain-text turn");
+  });
+
+  it("stamps empty reasoning_content on a thinking-mode turn that returned null reasoning", async () => {
+    // 0.5.18 covered "reasoner turn with reasoning present." This is
+    // the inverse: thinking-mode model returns `reasoning_content:
+    // null` (legitimate edge case — zero reasoning deltas on a flash
+    // turn, or forced-summary paths that don't emit reasoning). Prior
+    // behavior was `if (reasoning.length > 0)` which silently dropped
+    // the field, and the NEXT API call 400'd. Invariant is now keyed
+    // to the producing model, not to whether reasoning arrived.
+    const { fetch: fakeFetch, bodies } = capturingFetch([
+      { content: "straight answer", reasoning_content: undefined },
+      { content: "follow-up" },
+    ]);
+    const client = new DeepSeekClient({ apiKey: "sk-test", fetch: fakeFetch });
+    const loop = new CacheFirstLoop({
+      client,
+      prefix: new ImmutablePrefix({ system: "s" }),
+      model: "deepseek-v4-flash",
+      stream: false,
+    });
+    for await (const _ev of loop.step("hello")) {
+      /* drain */
+    }
+    for await (const _ev of loop.step("next")) {
+      /* drain */
+    }
+    const turn2Messages = bodies[1]!.messages;
+    const assistant = turn2Messages.find((m) => m.role === "assistant");
+    expect(assistant).toBeDefined();
+    // Field must be PRESENT (even empty) — presence is what satisfies
+    // DeepSeek's thinking-mode validator.
+    expect(Object.hasOwn(assistant!, "reasoning_content")).toBe(true);
+    expect(assistant?.reasoning_content).toBe("");
+  });
+
+  it("does NOT stamp reasoning_content on a deepseek-chat turn that returned null", async () => {
+    // Mirror image: non-thinking-mode sessions must stay clean —
+    // sending an empty string here would still be valid per the API
+    // but would needlessly churn the prefix cache across V3 calls.
+    const { fetch: fakeFetch, bodies } = capturingFetch([
+      { content: "hi", reasoning_content: undefined },
+      { content: "bye" },
+    ]);
+    const client = new DeepSeekClient({ apiKey: "sk-test", fetch: fakeFetch });
+    const loop = new CacheFirstLoop({
+      client,
+      prefix: new ImmutablePrefix({ system: "s" }),
+      model: "deepseek-chat",
+      stream: false,
+    });
+    for await (const _ev of loop.step("hello")) {
+      /* drain */
+    }
+    for await (const _ev of loop.step("next")) {
+      /* drain */
+    }
+    const turn2Messages = bodies[1]!.messages;
+    const assistant = turn2Messages.find((m) => m.role === "assistant");
+    expect(assistant).toBeDefined();
+    expect(Object.hasOwn(assistant!, "reasoning_content")).toBe(false);
   });
 
   it("pins thinking=enabled + reasoning_effort=max for v4-pro (agent-class default)", async () => {

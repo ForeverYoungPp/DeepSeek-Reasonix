@@ -406,10 +406,17 @@ export class CacheFirstLoop {
     this.sessionName = opts.session ?? null;
     if (this.sessionName) {
       const prior = loadSessionMessages(this.sessionName);
-      const { messages, healedCount, tokensSaved } = healLoadedMessagesByTokens(
-        prior,
-        DEFAULT_MAX_RESULT_TOKENS,
-      );
+      const shrunk = healLoadedMessagesByTokens(prior, DEFAULT_MAX_RESULT_TOKENS);
+      // On thinking-mode sessions, stamp empty `reasoning_content` on any
+      // assistant turn that's missing the field. Covers sessions written
+      // by pre-fix builds (0.5.14 → 0.6.0) where the stamp was gated on
+      // `reasoning.length > 0` — those files carry assistant turns with
+      // the field absent, and the next API call 400s on resume even
+      // though we're no longer producing such messages.
+      const stamped = stampMissingReasoningForThinkingMode(shrunk.messages, this.model);
+      const messages = stamped.messages;
+      const healedCount = shrunk.healedCount + stamped.stampedCount;
+      const tokensSaved = shrunk.tokensSaved;
       for (const msg of messages) this.log.append(msg);
       this.resumedMessageCount = messages.length;
       if (healedCount > 0) {
@@ -1328,7 +1335,12 @@ export class CacheFirstLoop {
       );
 
       this.appendAndPersist(
-        this.assistantMessage(assistantContent, repairedCalls, reasoningContent),
+        this.assistantMessage(
+          assistantContent,
+          repairedCalls,
+          this.modelForCurrentCall(),
+          reasoningContent,
+        ),
       );
 
       yield {
@@ -1625,7 +1637,9 @@ export class CacheFirstLoop {
       // Record under the actual model used (flash), not `this.model`,
       // so per-turn cost and `/stats` reflect reality.
       const summaryStats = this.stats.record(this._turn, summaryModel, resp.usage ?? new Usage());
-      this.appendAndPersist(this.assistantMessage(summary, [], resp.reasoningContent ?? undefined));
+      this.appendAndPersist(
+        this.assistantMessage(summary, [], summaryModel, resp.reasoningContent),
+      );
       yield {
         turn: this._turn,
         role: "assistant_final",
@@ -1658,42 +1672,45 @@ export class CacheFirstLoop {
     return final;
   }
 
+  /**
+   * Build an assistant message for the log. The `producingModel` arg is
+   * the model that actually generated this turn (flash, pro, the
+   * forced-summary flash call, `this.model` for synthetics, etc.) —
+   * NOT `this.model`, because escalation + forced-summary can both
+   * route a single turn to a different model.
+   *
+   * The single invariant this encodes: if the producing model is
+   * thinking-mode, `reasoning_content` MUST be present on the
+   * persisted message — even as an empty string. DeepSeek's validator
+   * 400s the NEXT request if any historical thinking-mode assistant
+   * turn is missing it. We used to gate on `reasoning.length > 0`,
+   * which silently dropped the field whenever the stream emitted zero
+   * reasoning deltas or the API returned `reasoning_content: null` —
+   * both legitimate edge cases the 0.5.15/0.5.18 fixes missed.
+   */
   private assistantMessage(
     content: string,
     toolCalls: ToolCall[],
-    reasoningContent?: string,
+    producingModel: string,
+    reasoningContent?: string | null,
   ): ChatMessage {
     const msg: ChatMessage = { role: "assistant", content };
     if (toolCalls.length > 0) msg.tool_calls = toolCalls;
-    // DeepSeek's "thinking mode must be passed back" rule applies to
-    // ANY R1-generated assistant message, not just the ones with
-    // tool_calls. 0.5.15 mis-scoped this: if the loop produced a
-    // plain-text R1 turn (e.g. "plan submitted — awaiting approval")
-    // between a tool-call turn and the next user turn, its reasoning
-    // was stripped, and the following request 400'd with the same
-    // error we already thought we'd fixed. deepseek-chat never emits
-    // reasoning_content, so V3 requests stay untouched (the field
-    // simply isn't present).
-    if (reasoningContent && reasoningContent.length > 0) {
-      msg.reasoning_content = reasoningContent;
+    if (isThinkingModeModel(producingModel)) {
+      msg.reasoning_content = reasoningContent ?? "";
     }
     return msg;
   }
 
   /**
-   * Build a synthetic assistant message we insert into the log without
-   * a real API round trip (abort notices, future system injections).
-   * Reasoner models reject follow-up requests whose assistant history
-   * is missing `reasoning_content`, so we stamp an empty-string
-   * placeholder on reasoner sessions to satisfy the validator. V3
-   * doesn't care — field stays absent there.
+   * Synthetic assistant message (abort notices, future system injections)
+   * — no real API round trip. Delegates to {@link assistantMessage} with
+   * `this.model` as the stand-in producer, so the same thinking-mode
+   * invariant applies: reasoner sessions get an empty-string
+   * `reasoning_content`; V3 sessions get nothing.
    */
   private syntheticAssistantMessage(content: string): ChatMessage {
-    const msg: ChatMessage = { role: "assistant", content };
-    if (isThinkingModeModel(this.model)) {
-      msg.reasoning_content = "";
-    }
-    return msg;
+    return this.assistantMessage(content, [], this.model, "");
   }
 }
 
@@ -2067,6 +2084,38 @@ export function healLoadedMessages(
   const paired = fixToolCallPairing(shrunk.messages);
   const healedCount = shrunk.healedCount + paired.droppedAssistantCalls + paired.droppedStrayTools;
   return { messages: paired.messages, healedCount, healedFrom: shrunk.healedFrom };
+}
+
+/**
+ * Back-fill empty `reasoning_content` on assistant messages that lack it
+ * when the current session model is thinking-mode. Covers session files
+ * written by older builds (0.5.14 → 0.6.0) whose bug was exactly the
+ * thing we're fixing now: reasoning was gated on `length > 0`, so turns
+ * that returned empty reasoning were persisted without the field, and
+ * the NEXT API call 400s with the "thinking mode must be passed back"
+ * error the moment the user resumes.
+ *
+ * Non-thinking-mode sessions are left untouched — deepseek-chat round
+ * trips don't include the field at all, and stamping empty strings
+ * would just churn the prefix cache.
+ *
+ * Exported for tests.
+ */
+export function stampMissingReasoningForThinkingMode(
+  messages: ChatMessage[],
+  model: string,
+): { messages: ChatMessage[]; stampedCount: number } {
+  if (!isThinkingModeModel(model)) {
+    return { messages, stampedCount: 0 };
+  }
+  let stampedCount = 0;
+  const out = messages.map((msg) => {
+    if (msg.role !== "assistant") return msg;
+    if (Object.hasOwn(msg, "reasoning_content")) return msg;
+    stampedCount += 1;
+    return { ...msg, reasoning_content: "" };
+  });
+  return { messages: out, stampedCount };
 }
 
 /**
