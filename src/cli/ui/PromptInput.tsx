@@ -42,9 +42,11 @@ const BAR = "▎ ";
  *     where content is hidden. The cursor moves the viewport so it
  *     stays visible.
  *
- * The cursor is a static `▌` block — no blink. Blinking required a
- * 120ms ticker that re-rendered the whole tree, which on fragile
- * terminals interacted badly with Ink's eraseLines miscount.
+ * Cursor blinks at ~480 ms half-period. The ticker that drives the
+ * blink also flows the left-bar gradient and the wordmark, so
+ * we're already paying for re-render every tick — the cursor blink
+ * is free on top of that. Disabled state freezes the cursor solid
+ * so the disabled prompt doesn't compete with the active spinner.
  */
 
 export interface PromptInputProps {
@@ -193,6 +195,10 @@ export function PromptInput({
     disabled
       ? "gray"
       : GRADIENT[(((rowIdx + barOffset) % GRADIENT.length) + GRADIENT.length) % GRADIENT.length]!;
+  // Cursor blink — toggles every 4 ticks (~480 ms) so the prompt
+  // looks alive at rest. Cursor stays solid while disabled (busy
+  // turn) so the disabled state reads as "frozen", not "dead".
+  const cursorVisible = disabled ? true : Math.floor(tick / 4) % 2 === 0;
   const { line: cursorLine, col: cursorCol } = lineAndColumn(value, cursor);
 
   // Big-buffer mitigation: if the buffer has many logical lines,
@@ -228,6 +234,7 @@ export function PromptInput({
             isFirst={isFirst}
             isCursorLine={isCursorLine && !disabled}
             cursorCol={isCursorLine ? cursorCol : null}
+            cursorVisible={cursorVisible}
             showPlaceholder={showPlaceholder}
             placeholderText={effectivePlaceholder}
             promptPrefix={promptPrefix}
@@ -276,6 +283,8 @@ interface PromptLineProps {
   isFirst: boolean;
   isCursorLine: boolean;
   cursorCol: number | null;
+  /** True when the cursor block / inverse char should be drawn this tick. */
+  cursorVisible: boolean;
   showPlaceholder: boolean;
   placeholderText: string;
   promptPrefix: string;
@@ -293,6 +302,7 @@ function PromptLine({
   isFirst,
   isCursorLine,
   cursorCol,
+  cursorVisible,
   showPlaceholder,
   placeholderText,
   promptPrefix,
@@ -316,7 +326,7 @@ function PromptLine({
         <Text bold color={accentColor}>
           {bodyPrefix}
         </Text>
-        {!disabled ? <Text color={accentColor}>▌</Text> : null}
+        {!disabled ? <Text color={accentColor}>{cursorVisible ? "▌" : " "}</Text> : null}
         <Text dimColor>{placeholderText}</Text>
       </Box>
     );
@@ -344,6 +354,7 @@ function PromptLine({
         segments={viewport.segments}
         cursorCell={isCursorLine ? viewport.cursorCell : null}
         accentColor={accentColor}
+        cursorVisible={cursorVisible}
       />
       {viewport.hiddenRight ? (
         <Text color="gray" dimColor>
@@ -369,10 +380,12 @@ function ViewportContent({
   segments,
   cursorCell,
   accentColor,
+  cursorVisible,
 }: {
   segments: Segment[];
   cursorCell: number | null;
   accentColor: "cyan" | "gray";
+  cursorVisible: boolean;
 }) {
   // No cursor on this line — straight render.
   if (cursorCell === null) {
@@ -400,9 +413,11 @@ function ViewportContent({
     // Cursor lands inside this segment.
     if (seg.kind === "paste") {
       // The cursor is "on" the paste sentinel — render the paste
-      // block inversed so the user sees they're at it.
+      // block inversed so the user sees they're at it. Inverse
+      // toggles with the blink so the paste sentinel stays
+      // legible during the cursor's "off" half-cycle.
       out.push(
-        <Text key={`p-${i}-cursor`} color="magenta" bold inverse>
+        <Text key={`p-${i}-cursor`} color="magenta" bold inverse={cursorVisible}>
           {seg.label}
         </Text>,
       );
@@ -418,16 +433,16 @@ function ViewportContent({
     }
     if (split.atCursor.length > 0) {
       out.push(
-        <Text key={`t-${i}-c`} inverse color={accentColor}>
+        <Text key={`t-${i}-c`} inverse={cursorVisible} color={accentColor}>
           {split.atCursor}
         </Text>,
       );
     } else {
       // Cursor sits past the segment's last char (end-of-text in this
-      // segment). Render block here.
+      // segment). Render block here, blinking with the tick.
       out.push(
         <Text key={`t-${i}-c-eol`} color={accentColor}>
-          ▌
+          {cursorVisible ? "▌" : " "}
         </Text>,
       );
     }
@@ -442,7 +457,7 @@ function ViewportContent({
   if (!placed) {
     out.push(
       <Text key="cursor-eol" color={accentColor}>
-        ▌
+        {cursorVisible ? "▌" : " "}
       </Text>,
     );
   }

@@ -16,7 +16,9 @@
 
 import { Box, Text } from "ink";
 import React, { useState } from "react";
+import { ModalCard } from "./ModalCard.js";
 import { useKeystroke } from "./keystroke-context.js";
+import { useTick } from "./ticker.js";
 
 export interface PlanRefineInputProps {
   /**
@@ -63,19 +65,40 @@ export function PlanRefineInput({ mode, onSubmit, onCancel }: PlanRefineInputPro
     }
   });
 
-  const title =
+  const tick = useTick();
+  // Slow blink for the cursor block (~480 ms on/off). Same cadence
+  // as the wordmark's brand-mark pulse; reads as "input is alive".
+  const cursorOn = Math.floor(tick / 4) % 2 === 0;
+
+  const meta =
     mode === "approve"
-      ? "▸ approving — any last instructions or answers to open questions?"
+      ? {
+          title: "approving — any last instructions?",
+          icon: "📋",
+          accent: "#67e8f9",
+        }
       : mode === "checkpoint-revise"
-        ? "▸ revising — what should change before the next step?"
+        ? {
+            title: "revising — what should change before the next step?",
+            icon: "✏",
+            accent: "#fbbf24",
+          }
         : mode === "choice-custom"
-          ? "▸ custom answer — type whatever fits"
-          : "▸ refining — what should the model change?";
+          ? {
+              title: "custom answer — type whatever fits",
+              icon: "🔀",
+              accent: "#f0abfc",
+            }
+          : {
+              title: "refining — what should the model change?",
+              icon: "✏",
+              accent: "#fbbf24",
+            };
   const hint =
     mode === "approve"
       ? "Answer questions the plan raised, add constraints, or just press Enter to approve as-is."
       : mode === "checkpoint-revise"
-        ? "Scope change, skip steps, alternative approach — the model will adjust the remaining plan based on this."
+        ? "Scope change, skip steps, alternative approach — the model adjusts the remaining plan."
         : mode === "choice-custom"
           ? "Free-form reply. The model reads it verbatim and proceeds — no need to match the listed options."
           : "Describe what's wrong or missing, or answer questions the plan raised.";
@@ -89,25 +112,22 @@ export function PlanRefineInput({ mode, onSubmit, onCancel }: PlanRefineInputPro
           : " (Enter with blank = ask the model to list concrete questions.)";
 
   return (
-    <Box flexDirection="column" paddingX={1} marginY={1}>
-      <Box>
-        <Text bold color="yellow">
-          {title}
-        </Text>
-      </Box>
-      <Box marginTop={1}>
+    <ModalCard accent={meta.accent} icon={meta.icon} title={meta.title}>
+      <Box marginBottom={1}>
         <Text dimColor>
           {hint} Enter to send · Esc to return to the picker.
           {value === "" ? blankHint : ""}
         </Text>
       </Box>
-      <Box marginTop={1}>
-        <Text>
-          <Text color="yellow">› </Text>
-          <Text>{value || " "}</Text>
-          <Text color="yellow">▍</Text>
+      <Box>
+        <Text color={meta.accent} bold>
+          {"› "}
+        </Text>
+        <Text>{value}</Text>
+        <Text color={meta.accent} bold>
+          {cursorOn ? "▍" : " "}
         </Text>
       </Box>
-    </Box>
+    </ModalCard>
   );
 }
