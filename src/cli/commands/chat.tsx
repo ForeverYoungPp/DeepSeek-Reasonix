@@ -290,6 +290,21 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
     rewriteSession(opts.session, []);
   }
 
+  // Clear the terminal viewport AND scrollback before mounting Ink
+  // so the user lands on a fresh canvas — no leftover prompt /
+  // last-command output bleeding into the TUI's first frame.
+  //   \x1b[2J — erase visible screen
+  //   \x1b[3J — erase scrollback (xterm extension; safely ignored
+  //             by terminals that don't implement it)
+  //   \x1b[H  — cursor home
+  // Stdout-only — stderr stays untouched so any startup diagnostics
+  // we wrote earlier (loadDotenv, MCP connect logs) aren't lost.
+  // Skipped on non-TTY runs (CI, piped output) where ANSI sequences
+  // would leak into the captured output.
+  if (process.stdout.isTTY) {
+    process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+  }
+
   const { waitUntilExit } = render(
     <Root
       initialKey={initialKey}
