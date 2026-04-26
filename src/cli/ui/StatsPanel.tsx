@@ -4,6 +4,7 @@ import type { EditMode } from "../../config.js";
 import { DEEPSEEK_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS } from "../../telemetry.js";
 import type { SessionSummary } from "../../telemetry.js";
 import { VERSION } from "../../version.js";
+import { COLOR, GLYPH, GRADIENT, gradientCells } from "./theme.js";
 import { useTick } from "./ticker.js";
 
 /**
@@ -158,35 +159,38 @@ export function StatsPanel({
   // actually had a chance to build, we flip to the live gradient.
   const coldStart = summary.turns <= COLD_START_TURNS;
 
-  // Width of the soft demarcation rule under the stats. We compute it
-  // from the actual terminal columns so it stretches edge-to-edge but
-  // never overflows; falls back to 78 cells in tests / no-stdout.
+  // The two decorative gradient rules (top + bottom) frame the panel
+  // as one visual unit instead of leaving the wordmark floating in
+  // the void. Width tracks the terminal so the bar always stretches
+  // edge-to-edge; falls back to 78 cells in tests / no-stdout.
   const ruleWidth = Math.max(20, columns - 2);
   return (
-    // Borderless layout: no `borderStyle`, no rounded box, no `width={cols}`
-    // pinning. Bordered Boxes were the most visible amplifier of Ink's
-    // eraseLines miscount on Windows terminals — every miscounted render
-    // pushed a top-border frame into scrollback. Without a border there
-    // is nothing visually obvious to duplicate; visual structure comes
-    // from the gradient wordmark + colored pills + a top/bottom margin
-    // + a thin dim rule that closes the panel cleanly under the metrics.
+    // Borderless layout: no `borderStyle`, no rounded box. Bordered
+    // Boxes were the most visible amplifier of Ink's eraseLines
+    // miscount on Windows terminals. Visual weight here comes from
+    // truecolor gradient rules at the top and bottom (rendered as
+    // pure Text so they never trigger the eraseLines bug), the
+    // animated wordmark + pill row, and a soft inner padding.
     <Box flexDirection="column" paddingX={1} marginBottom={1}>
-      <Header
-        model={model}
-        prefixHash={prefixHash}
-        harvestOn={harvestOn}
-        branchOn={branchOn}
-        branchBudget={branchBudget ?? 1}
-        reasoningEffort={reasoningEffort}
-        planMode={planMode}
-        editMode={editMode}
-        turns={summary.turns}
-        updateAvailable={updateAvailable}
-        narrow={narrow}
-        busy={busy ?? false}
-        proArmed={proArmed ?? false}
-        escalated={escalated ?? false}
-      />
+      <GradientRule width={ruleWidth} />
+      <Box marginTop={1}>
+        <Header
+          model={model}
+          prefixHash={prefixHash}
+          harvestOn={harvestOn}
+          branchOn={branchOn}
+          branchBudget={branchBudget ?? 1}
+          reasoningEffort={reasoningEffort}
+          planMode={planMode}
+          editMode={editMode}
+          turns={summary.turns}
+          updateAvailable={updateAvailable}
+          narrow={narrow}
+          busy={busy ?? false}
+          proArmed={proArmed ?? false}
+          escalated={escalated ?? false}
+        />
+      </Box>
       {narrow ? (
         <StackedMetrics
           summary={summary}
@@ -205,8 +209,30 @@ export function StatsPanel({
         />
       )}
       <Box marginTop={1}>
-        <Text dimColor>{"─".repeat(ruleWidth)}</Text>
+        <GradientRule width={ruleWidth} thin />
       </Box>
+    </Box>
+  );
+}
+
+/**
+ * One-line gradient bar spanning the panel width. `thin` swaps the
+ * solid block for a half-block so the bottom of the panel is
+ * visually quieter than the top — top reads as "header band", bottom
+ * reads as "section close." Each cell renders as its own Text so
+ * Ink's runtime can color each character independently; this is the
+ * pattern the wordmark uses too.
+ */
+function GradientRule({ width, thin }: { width: number; thin?: boolean }) {
+  const cells = gradientCells(width, thin ? "▁" : "▄");
+  return (
+    <Box>
+      {cells.map((c, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: cells form a fixed-width band by index, never reordered
+        <Text key={`grule-${i}`} color={c.color}>
+          {c.ch}
+        </Text>
+      ))}
     </Box>
   );
 }
@@ -400,24 +426,26 @@ function ContextCell({
   if (promptTokens === 0) {
     return (
       <Text>
-        <Text dimColor>ctx </Text>
+        <Text color={COLOR.info} dimColor>
+          {"▣ ctx "}
+        </Text>
         <Text dimColor>— (no turns yet)</Text>
       </Text>
     );
   }
-  const color = ratio >= 0.8 ? "red" : ratio >= 0.6 ? "yellow" : "green";
+  const color = ratio >= 0.8 ? COLOR.err : ratio >= 0.6 ? COLOR.warn : COLOR.ok;
   const pct = Math.round(ratio * 100);
   return (
     <Text>
-      <Text dimColor>ctx </Text>
-      {showBar ? <Bar ratio={ratio} color={color} /> : null}
-      {showBar ? <Text> </Text> : null}
+      <Text color={COLOR.info}>{"▣ ctx  "}</Text>
+      <Bar ratio={ratio} color={color} cells={showBar ? 14 : 10} />
+      <Text> </Text>
       <Text color={color} bold>
         {formatTokens(promptTokens)}/{formatTokens(ctxMax)}
       </Text>
       <Text dimColor> ({pct}%)</Text>
       {ratio >= 0.8 ? (
-        <Text color="red" bold>
+        <Text color={COLOR.err} bold>
           {"  ·  /compact"}
         </Text>
       ) : null}
@@ -438,7 +466,9 @@ function CacheCell({
   if (turns === 0) {
     return (
       <Text>
-        <Text dimColor>cache </Text>
+        <Text color={COLOR.info} dimColor>
+          {"⌬ cache "}
+        </Text>
         <Text dimColor>—</Text>
       </Text>
     );
@@ -446,7 +476,9 @@ function CacheCell({
   if (coldStart) {
     return (
       <Text>
-        <Text dimColor>cache </Text>
+        <Text color={COLOR.info} dimColor>
+          {"⌬ cache "}
+        </Text>
         <Text dimColor>{pct}% </Text>
         <Text dimColor italic>
           (cold start)
@@ -454,10 +486,10 @@ function CacheCell({
       </Text>
     );
   }
-  const color = hitRatio >= 0.7 ? "green" : hitRatio >= 0.4 ? "yellow" : "red";
+  const color = hitRatio >= 0.7 ? COLOR.ok : hitRatio >= 0.4 ? COLOR.warn : COLOR.err;
   return (
     <Text>
-      <Text dimColor>cache </Text>
+      <Text color={COLOR.info}>{"⌬ cache  "}</Text>
       <Text color={color} bold>
         {pct}%
       </Text>
@@ -470,17 +502,17 @@ function CacheCell({
  * apart — a $0.20 single turn should feel just as warn-worthy as a $2
  * session total. Values are rough "notice this" points, not hard caps.
  */
-function turnCostColor(cost: number): "green" | "yellow" | "red" | undefined {
+function turnCostColor(cost: number): string | undefined {
   if (cost <= 0) return undefined;
-  if (cost >= 0.2) return "red";
-  if (cost >= 0.05) return "yellow";
-  return "green";
+  if (cost >= 0.2) return COLOR.err;
+  if (cost >= 0.05) return COLOR.warn;
+  return COLOR.ok;
 }
-function sessionCostColor(cost: number): "green" | "yellow" | "red" | undefined {
+function sessionCostColor(cost: number): string | undefined {
   if (cost <= 0) return undefined;
-  if (cost >= 5) return "red";
-  if (cost >= 0.5) return "yellow";
-  return "green";
+  if (cost >= 5) return COLOR.err;
+  if (cost >= 0.5) return COLOR.warn;
+  return COLOR.ok;
 }
 
 function CostCell({
@@ -493,7 +525,9 @@ function CostCell({
   if (summary.turns === 0) {
     return (
       <Text>
-        <Text dimColor>cost </Text>
+        <Text color={COLOR.info} dimColor>
+          {"◴ cost "}
+        </Text>
         <Text dimColor>—</Text>
       </Text>
     );
@@ -506,7 +540,7 @@ function CostCell({
   const sessionColor = coldStart ? undefined : sessionCostColor(summary.totalCostUsd);
   return (
     <Text>
-      <Text dimColor>turn </Text>
+      <Text color={COLOR.info}>{"◴ turn  "}</Text>
       <Text color={turnColor} bold={!coldStart} dimColor={coldStart}>
         ${summary.lastTurnCostUsd.toFixed(4)}
       </Text>
@@ -519,10 +553,10 @@ function CostCell({
 }
 
 function BalanceCell({ balance }: { balance: { currency: string; total: number } }) {
-  const color = balance.total < 1 ? "red" : balance.total < 5 ? "yellow" : "green";
+  const color = balance.total < 1 ? COLOR.err : balance.total < 5 ? COLOR.warn : COLOR.ok;
   return (
     <Text>
-      <Text dimColor>balance </Text>
+      <Text color={COLOR.info}>{"◐ balance  "}</Text>
       <Text color={color} bold>
         {balance.currency === "USD" ? "$" : ""}
         {balance.total.toFixed(2)}
@@ -533,15 +567,29 @@ function BalanceCell({ balance }: { balance: { currency: string; total: number }
 }
 
 /**
- * Unicode progress bar for the narrow layout's context cell. 10 cells
- * wide — narrow terminals are already cramped, and the bar is just a
- * visual cue for the percentage next to it, not the primary readout.
+ * Truecolor progress bar. Filled cells use the threshold color (green
+ * → amber → rose) so the bar communicates pressure at a glance;
+ * empty cells use a dim shade so the empty portion is visible
+ * without dominating. ▰/▱ have distinct shapes (filled vs hollow)
+ * so the boundary is clear even when colors snap to 8-color slots
+ * on legacy terminals.
  */
-function Bar({ ratio, color }: { ratio: number; color: "green" | "yellow" | "red" }) {
-  const cells = 10;
+function Bar({
+  ratio,
+  color,
+  cells = 14,
+}: {
+  ratio: number;
+  color: string;
+  cells?: number;
+}) {
   const filled = Math.max(0, Math.min(cells, Math.round(ratio * cells)));
-  const bar = "█".repeat(filled) + "░".repeat(cells - filled);
-  return <Text color={color}>{bar}</Text>;
+  return (
+    <Text>
+      <Text color={color}>{"▰".repeat(filled)}</Text>
+      <Text dimColor>{"▱".repeat(cells - filled)}</Text>
+    </Text>
+  );
 }
 
 /**

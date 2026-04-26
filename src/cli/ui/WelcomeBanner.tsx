@@ -1,15 +1,17 @@
 /**
  * Welcome card on the empty session. The first thing a user sees
- * after launching `reasonix code` — needs to communicate, with the
+ * after launching `reasonix code` — needs to communicate, in the
  * ~5 seconds before they type, three things: brand, what to type,
- * how to escape. Card-style framing (left bar + sectioned hints)
- * gives it visual weight without using bordered Boxes (those
- * amplified Ink's Windows eraseLines miscount).
+ * how to escape. Card framing uses a gradient top rule + left-side
+ * accent bar + sectioned hints so it reads as a designed surface
+ * rather than a bare list. No bordered Boxes — those amplified
+ * Ink's Windows eraseLines miscount.
  */
 
-import { Box, Text } from "ink";
+import { Box, Text, useStdout } from "ink";
 // biome-ignore lint/style/useImportType: tsconfig jsx=react needs React in value scope
 import React from "react";
+import { COLOR, gradientCells } from "./theme.js";
 
 export interface WelcomeBannerProps {
   /** True when running `reasonix code`. Surfaces code-mode hints. */
@@ -17,17 +19,21 @@ export interface WelcomeBannerProps {
 }
 
 export function WelcomeBanner({ inCodeMode }: WelcomeBannerProps): React.ReactElement {
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const ruleWidth = Math.min(60, Math.max(28, cols - 4));
   return (
     <Box flexDirection="column" paddingX={1} marginY={1}>
-      <BarRow color="magenta">
-        <Text bold color="magenta">
+      <GradientRule width={ruleWidth} />
+      <BarRow>
+        <Text bold color={COLOR.brand}>
           ◈ welcome
         </Text>
         <Text dimColor>{"  ·  type a message to start"}</Text>
       </BarRow>
-      <BarRow color="magenta" />
-      <BarRow color="magenta">
-        <Text bold color="cyan">
+      <BarRow />
+      <BarRow>
+        <Text bold color={COLOR.primary}>
           quick start
         </Text>
       </BarRow>
@@ -40,32 +46,48 @@ export function WelcomeBanner({ inCodeMode }: WelcomeBannerProps): React.ReactEl
         </>
       ) : null}
       <Hint cmd="/exit" desc="quit (Ctrl+C also works)" />
-      <BarRow color="magenta" />
-      <BarRow color="magenta">
+      <BarRow />
+      <BarRow>
         <Text dimColor italic>
           tip:
         </Text>
         <Text dimColor>{"  Ctrl+J inserts a newline · trailing \\ also continues"}</Text>
       </BarRow>
+      <Box marginTop={1}>
+        <GradientRule width={ruleWidth} thin />
+      </Box>
     </Box>
   );
 }
 
 /**
- * One row inside the welcome card — a left-side colored bar followed
- * by content. Children are optional so we can use this for blank
- * spacer rows (bar only) that visually anchor the card height.
+ * One-line gradient rule. `thin` swaps the half-block top/bottom so
+ * the top of the card reads as a "header band" (▄ — bottom-half
+ * filled) and the bottom as "section close" (▁ — minimal pixel
+ * row). Same primitive the StatsPanel uses, kept consistent.
  */
-function BarRow({
-  color,
-  children,
-}: {
-  color: "magenta" | "cyan";
-  children?: React.ReactNode;
-}) {
+function GradientRule({ width, thin }: { width: number; thin?: boolean }) {
+  const cells = gradientCells(width, thin ? "▁" : "▄");
   return (
     <Box>
-      <Text color={color} bold>
+      {cells.map((c, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: fixed-width gradient row, never reordered
+        <Text key={`wrule-${i}`} color={c.color}>
+          {c.ch}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+/**
+ * Card row — left-side accent bar followed by content. Children
+ * optional so we can use this for blank spacer rows (bar only).
+ */
+function BarRow({ children }: { children?: React.ReactNode }) {
+  return (
+    <Box>
+      <Text color={COLOR.brand} bold>
         ▎
       </Text>
       <Text> </Text>
@@ -75,14 +97,14 @@ function BarRow({
 }
 
 /**
- * Single hint row — bold magenta cmd token + dim description.
+ * Single hint row — bold accent cmd token + dim description.
  * Padded so all cmd tokens line up regardless of length, like a
  * man-page synopsis.
  */
 function Hint({ cmd, desc }: { cmd: string; desc: string }) {
   return (
-    <BarRow color="magenta">
-      <Text bold color="magenta">
+    <BarRow>
+      <Text bold color={COLOR.accent}>
         {cmd.padEnd(8)}
       </Text>
       <Text dimColor>{`  ${desc}`}</Text>

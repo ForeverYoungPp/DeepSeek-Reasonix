@@ -7,6 +7,7 @@ import type { PlanStep } from "../../tools/plan.js";
 import { PlanStateBlock } from "./PlanStateBlock.js";
 import { PlanStepList } from "./PlanStepList.js";
 import { Markdown } from "./markdown.js";
+import { COLOR, gradientCells } from "./theme.js";
 import { useElapsedSeconds, useTick } from "./ticker.js";
 import { formatDuration, summarizeToolResult } from "./tool-summary.js";
 
@@ -439,27 +440,38 @@ export const EventRow = React.memo(function EventRow({
 });
 
 /**
- * Thin horizontal rule between turns with a cyan ◆ centered as the
- * Reasonix mark. Past-turn separators live inside `<Static>` (Ink's
- * render-once optimization), so animation here would freeze at
- * tick=0 on every past turn — we keep it static by design. The
- * animated heartbeat lives in PulsingAssistantGlyph (current turn)
- * and the Wordmark (StatsPanel) where rerender is free.
+ * Decorative gradient rule between turns. Uses the brand gradient
+ * (teal → fuchsia) so the boundary between "old turn" and "new
+ * turn" reads as a designed accent rather than a dim minus-sign
+ * row. Static — past separators live inside Ink's `<Static>`, so
+ * animation would freeze at tick=0 anyway.
  */
 function TurnSeparator() {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
   const width = Math.max(16, cols - 2);
-  const half = Math.floor((width - 3) / 2);
-  const left = "─".repeat(half);
-  const right = "─".repeat(width - half - 3);
+  // Reserve 5 cells for `  ◆  ` in the middle. Split the remainder
+  // into two gradient halves so the brand mark sits on the seam.
+  const sideWidth = Math.max(2, Math.floor((width - 5) / 2));
+  const leftCells = gradientCells(sideWidth, "─");
+  const rightCells = gradientCells(sideWidth, "─");
   return (
     <Box marginTop={1} marginBottom={1}>
-      <Text dimColor>{left}</Text>
-      <Text color="cyan" bold>
-        {" ◆ "}
+      {leftCells.map((c, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: fixed-width gradient row
+        <Text key={`tsep-l-${i}`} color={c.color}>
+          {c.ch}
+        </Text>
+      ))}
+      <Text color={COLOR.brand} bold>
+        {"  ◆  "}
       </Text>
-      <Text dimColor>{right}</Text>
+      {rightCells.map((c, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: fixed-width gradient row
+        <Text key={`tsep-r-${i}`} color={c.color}>
+          {c.ch}
+        </Text>
+      ))}
     </Box>
   );
 }
