@@ -290,43 +290,24 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
     rewriteSession(opts.session, []);
   }
 
-  // Stay in the user's main screen so mouse-wheel scrolls scrollback
-  // naturally. Alt-screen would fix the resize ghost-stacking but
-  // breaks wheel scroll (terminal maps wheel to ↑↓ keys for the
-  // app, which collides with PromptInput's history recall). We
-  // accept resize ghosts as a known limitation of Ink's
-  // eraseLines miscount — `/clear` is the documented workaround.
+  // Visible-only clear at startup so the user lands on a fresh
+  // canvas. We deliberately DON'T send \x1b[3J (erase scrollback)
+  // because some terminal emulators — notably VSCode's integrated
+  // terminal — interpret it as "wipe everything we have", and the
+  // user then can't scroll up to see anything that came before.
+  // Visible clear (\x1b[2J + cursor home) is portable and
+  // sufficient: the previous shell prompt scrolls up into
+  // scrollback rather than vanishing.
   if (process.stdout.isTTY) {
-    process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+    process.stdout.write("\x1b[2J\x1b[H");
   }
 
-  // Resize listener — on every width change, hard-clear the visible
-  // viewport so Ink's next re-render starts at a known top-left
-  // cursor position rather than overlaying onto a stale frame whose
-  // visible row count has shifted with the new wrap. We prepend so
-  // our clear runs before Ink's own resize handler. Diagnostic
-  // print (gated on REASONIX_DEBUG_RESIZE=1) lets us verify the
-  // listener fires — necessary because at least one Windows
-  // terminal/host combination apparently does not surface the
-  // 'resize' event to Node's stdout emitter.
-  let lastCols = process.stdout.columns ?? 0;
-  const onResize = () => {
-    if (!process.stdout.isTTY) return;
-    const cols = process.stdout.columns ?? 0;
-    if (cols === lastCols) return;
-    lastCols = cols;
-    if (process.env.REASONIX_DEBUG_RESIZE) {
-      process.stderr.write(`[reasonix-debug: resize → cols=${cols}]\n`);
-    }
-    process.stdout.write("\x1b[2J\x1b[H");
-  };
-  if (process.stdout.isTTY) {
-    if (typeof process.stdout.prependListener === "function") {
-      process.stdout.prependListener("resize", onResize);
-    } else {
-      process.stdout.on("resize", onResize);
-    }
-  }
+  // No resize listener. Earlier versions wrote \x1b[2J on every
+  // resize event to neutralize Ink's eraseLines miscount, but on
+  // VSCode + similar terminals that 2J also wipes the chat history
+  // sitting in scrollback above the live region. Resize ghosts are
+  // an accepted known limitation now — `/clear` is the documented
+  // workaround when the live region accumulates duplicate panels.
 
   const { waitUntilExit } = render(
     <Root
@@ -345,7 +326,6 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
   try {
     await waitUntilExit();
   } finally {
-    process.stdout.removeListener("resize", onResize);
     for (const c of clients) await c.close();
   }
 }
