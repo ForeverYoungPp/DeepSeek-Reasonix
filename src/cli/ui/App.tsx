@@ -55,6 +55,7 @@ import { ShellConfirm, type ShellConfirmChoice, derivePrefix } from "./ShellConf
 import { SlashArgPicker } from "./SlashArgPicker.js";
 import { SlashSuggestions } from "./SlashSuggestions.js";
 import { StatsPanel } from "./StatsPanel.js";
+import { WelcomeBanner } from "./WelcomeBanner.js";
 import { detectBangCommand, formatBangUserMessage } from "./bang.js";
 import { describeRepair, formatEditResults, formatPendingPreview } from "./edit-history.js";
 import { KeystrokeProvider, useKeystroke } from "./keystroke-context.js";
@@ -2548,6 +2549,15 @@ export function App({
           <Static items={historical}>
             {(item) => <EventRow key={item.id} event={item} projectRoot={hookCwd} />}
           </Static>
+          {/*
+          Welcome card on the empty state. Visible only when nothing
+          has happened yet (no past events, nothing in flight, no
+          modal up). Removes the "what do I type?" friction without
+          surviving past the first turn.
+        */}
+          {historical.length === 0 && !busy && !streaming ? (
+            <WelcomeBanner inCodeMode={!!codeMode} />
+          ) : null}
           {/*
           Live rows are hidden while the ShellConfirm modal is up — the
           model's concurrent "please confirm" stream is noise the user
