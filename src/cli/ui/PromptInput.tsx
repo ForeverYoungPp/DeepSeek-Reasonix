@@ -524,8 +524,12 @@ function renderSegment(seg: Segment, key: number, _inverse: boolean): React.Reac
   if (seg.kind === "text") {
     return <Text key={`s-${key}`}>{seg.text}</Text>;
   }
+  // Paste sentinels render as a fuchsia bg-pill so they're visually
+  // distinct from typed text — the user can see "this is the
+  // collapsed paste, not 47 lines of code I typed". Matches the
+  // bg-pill idiom used elsewhere (mode bars, tool names).
   return (
-    <Text key={`s-${key}`} color="magenta" bold>
+    <Text key={`s-${key}`} backgroundColor="#f0abfc" color="black" bold>
       {seg.label}
     </Text>
   );

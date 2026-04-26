@@ -540,42 +540,57 @@ function EditFileDiff({ text }: { text: string }) {
   const lines = text.split(/\r?\n/);
   // Line 0 is the status header ("edited X (A→B chars)"), Line 1 is
   // the unified-diff hunk header ("@@ -N,M +N,M @@"), the rest is
-  // the colored diff body. We style the two headers distinctly so
-  // the hunk marker stands out the way git-diff's cyan `@@` does in
-  // most terminals.
+  // the colored diff body. The hunk header gets a magenta-bg pill —
+  // same idiom as the rest of the TUI — so it visually anchors each
+  // hunk. Body lines render with a colored gutter glyph + tinted bg
+  // for + and -, so the diff scans like a syntax-highlighted patch
+  // file rather than a wall of monochrome text.
   const [statusHeader, hunkHeader, ...body] = lines;
   return (
     <Box flexDirection="column">
       <Text dimColor>{` ${statusHeader ?? ""}`}</Text>
       {hunkHeader !== undefined ? (
-        <Text color="cyan" bold>
-          {hunkHeader}
-        </Text>
+        <Box marginTop={1}>
+          <Text backgroundColor="#c4b5fd" color="black" bold>
+            {` ${hunkHeader.trim()} `}
+          </Text>
+        </Box>
       ) : null}
       {body.map((line, i) => {
         // Key includes the line content slice so React isn't forced
         // to treat purely-positional identity; lines in the same
         // diff don't reorder but could repeat (e.g. blank lines).
         const key = `${i}-${line.slice(0, 32)}`;
-        if (line.startsWith("- ")) {
+        // Strip the leading "  " indent diff-preview adds to every
+        // body line so the gutter glyph is column 0 regardless of
+        // formatter changes upstream.
+        const stripped = line.replace(/^ {2}/, "");
+        if (stripped.startsWith("- ")) {
           return (
-            <Text key={key} color="red">
-              {line}
-            </Text>
+            <Box key={key}>
+              <Text color="#f87171" bold>
+                {"− "}
+              </Text>
+              <Text color="#fca5a5">{stripped.slice(2)}</Text>
+            </Box>
           );
         }
-        if (line.startsWith("+ ")) {
+        if (stripped.startsWith("+ ")) {
           return (
-            <Text key={key} color="green">
-              {line}
-            </Text>
+            <Box key={key}>
+              <Text color="#4ade80" bold>
+                {"+ "}
+              </Text>
+              <Text color="#86efac">{stripped.slice(2)}</Text>
+            </Box>
           );
         }
-        // Context line (starts with "  ") or unknown — dim.
+        // Context line (starts with " ") or unknown — dim.
         return (
-          <Text key={key} dimColor>
-            {line}
-          </Text>
+          <Box key={key}>
+            <Text dimColor>{"  "}</Text>
+            <Text dimColor>{stripped}</Text>
+          </Box>
         );
       })}
     </Box>

@@ -1152,8 +1152,7 @@ function BlockquoteView({
   return (
     <Box
       borderStyle="single"
-      borderColor="gray"
-      borderDimColor
+      borderColor="#c4b5fd"
       borderTop={false}
       borderRight={false}
       borderBottom={false}
