@@ -158,6 +158,15 @@ const commit: SlashHandler = (args, _loop, ctx) => {
   return runGitCommit(ctx.codeRoot, message);
 };
 
+const walk: SlashHandler = (_args, _loop, ctx) => {
+  if (!ctx.startWalkthrough) {
+    return {
+      info: "/walk is only available inside `reasonix code`.",
+    };
+  }
+  return { info: ctx.startWalkthrough() };
+};
+
 export const handlers: Record<string, SlashHandler> = {
   undo,
   history,
@@ -169,4 +178,5 @@ export const handlers: Record<string, SlashHandler> = {
   applyplan: applyPlan,
   mode,
   commit,
+  walk,
 };

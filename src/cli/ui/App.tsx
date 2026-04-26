@@ -1,5 +1,5 @@
 import type { WriteStream } from "node:fs";
-import { Box, Static, useApp, useStdout } from "ink";
+import { Box, Static, Text, useApp, useStdout } from "ink";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type AtUrlExpansion, expandAtMentions, expandAtUrls } from "../../at-mentions.js";
 import {
@@ -66,6 +66,7 @@ import {
 } from "./edit-history.js";
 import { appendGlobalMemory, appendProjectMemory, detectHashMemory } from "./hash-memory.js";
 import { useKeystroke } from "./keystroke-context.js";
+import { formatLoopStatus } from "./loop.js";
 import { handleMcpBrowseSlash } from "./mcp-browse.js";
 import { formatLongPaste } from "./paste-collapse.js";
 import { type McpServerSummary, handleSlash, parseSlash, suggestSlashCommands } from "./slash.js";
@@ -133,6 +134,28 @@ const FLUSH_INTERVAL_MS = 100;
  */
 const PLAIN_UI = process.env.REASONIX_UI === "plain";
 
+/**
+ * Single-line status pill rendered below the modeline whenever a /loop
+ * is active. Re-renders every second so the countdown ticks.
+ */
+function LoopStatusRow({
+  loop,
+}: {
+  loop: { prompt: string; intervalMs: number; nextFireAt: number; iter: number };
+}) {
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const nextFireMs = Math.max(0, loop.nextFireAt - Date.now());
+  return (
+    <Box>
+      <Text color="cyan">{`▸ ${formatLoopStatus(loop.prompt, nextFireMs, loop.iter)} · /loop stop or type to cancel`}</Text>
+    </Box>
+  );
+}
+
 interface StreamingState {
   id: string;
   text: string;
@@ -162,6 +185,12 @@ export function App({
   // Esc handler only fires once per turn (repeated presses would yield
   // stacked warning events).
   const abortedThisTurn = useRef(false);
+  // Mirrors the live `busy` flag for /loop's timer (it has no React
+  // closure handle, only refs). Skips the firing when a prior turn is
+  // still running rather than queuing a duplicate submit.
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
   // Name + truncated args of the tool currently dispatching. Populated
   // on `tool_start`, cleared on `tool` (or error). Drives the
   // "▸ tool<X> running…" pulse-spinner row so long tool calls don't
@@ -289,6 +318,11 @@ export function App({
   const [pendingCount, setPendingCount] = useState(0);
   const syncPendingCount = useCallback(() => {
     setPendingCount(pendingEdits.current.length);
+    // Bump the tick so the /walk modal re-evaluates "first remaining
+    // block" after each per-block apply/discard. Without this the
+    // EditConfirm render would keep the OLD block reference and never
+    // advance.
+    setPendingTick((t) => t + 1);
   }, []);
   // Edit-gate mode. `review` (default) queues edits into pendingEdits;
   // `auto` applies them immediately and exposes an undo banner. Shift+
@@ -309,6 +343,16 @@ export function App({
   // choice → handleEditReviewChoose resolves the promise, interceptor
   // resumes and returns the tool result the model will see.
   const [pendingEditReview, setPendingEditReview] = useState<EditBlock | null>(null);
+  // /walk active flag — when true the App walks pendingEdits one block
+  // at a time through EditConfirm. Distinct from `pendingEditReview`,
+  // which is the AUTO-mode tool-call interceptor. Walkthrough is
+  // user-initiated against the QUEUED pending list, not mid-stream.
+  const [walkthroughActive, setWalkthroughActive] = useState(false);
+  // Bumped every time codeApply/codeDiscard mutates pendingEdits so the
+  // walkthrough render can re-pick "block 0 of the current queue" via
+  // a useMemo dep. Without this, walkthroughActive alone wouldn't
+  // re-render after a partial apply.
+  const [pendingTick, setPendingTick] = useState(0);
   const editReviewResolveRef = useRef<((c: EditReviewChoice) => void) | null>(null);
   // Per-turn override: set by "apply-rest-of-turn" so subsequent edits
   // in the SAME turn skip the modal and land like AUTO. Resets to "ask"
@@ -449,6 +493,32 @@ export function App({
   // have changed. Shape mirrors AtUrlExpansion + an optional `body`
   // so the trailing block can be reconstructed from cache alone.
   const atUrlCache = useRef<Map<string, AtUrlExpansion & { body?: string }>>(new Map());
+  // Active /loop state. Null when no loop is running. Re-issuing /loop
+  // replaces the slot. Cancellation is centralized in stopLoop() so
+  // every cancel-trigger (Esc, /clear, /new, user-typed submit, /loop
+  // stop, exit) goes through one path. The timer is held in a sibling
+  // ref so React effects don't have to re-run on every timer tick.
+  const [activeLoop, setActiveLoop] = useState<{
+    prompt: string;
+    intervalMs: number;
+    nextFireAt: number;
+    iter: number;
+  } | null>(null);
+  const loopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // handleSubmit is defined far below as a useCallback. The /loop timer
+  // needs to call the LATEST closure on each firing (config could have
+  // shifted mid-loop), so we mirror it through a ref. The mirror is
+  // synced in a useEffect once handleSubmit is defined.
+  const handleSubmitRef = useRef<((raw: string) => Promise<void>) | null>(null);
+  const busyRef = useRef<boolean>(false);
+  const activeLoopRef = useRef<typeof activeLoop>(activeLoop);
+  // Set true by the loop timer just before it calls handleSubmitRef so
+  // handleSubmit's "any user submit cancels the loop" guard knows to
+  // skip itself. Reset to false at the top of every handleSubmit.
+  const loopFiringRef = useRef<boolean>(false);
+  useEffect(() => {
+    activeLoopRef.current = activeLoop;
+  }, [activeLoop]);
   // Full untruncated tool results, in arrival order. The EventLog
   // renderer clips tool output at 400 chars for display; `/tool N`
   // reads from this ref to show the real thing. Not persisted — a
@@ -815,7 +885,37 @@ export function App({
         setPendingEditReview(null);
         resolve("reject");
       }
+      // Esc during a busy turn also kills any active /loop — the user
+      // is taking over. Loops persist past plain Esc when the system is
+      // idle so a long-cadence loop doesn't die from random key noise.
+      if (activeLoopRef.current) stopLoop();
       loop.abort();
+      return;
+    }
+    // Esc when idle ALSO cancels an active loop, since hitting Esc with
+    // nothing else going on is a clear "stop whatever's running"
+    // gesture. No-op when no loop is active.
+    if (key.escape && !busy && activeLoopRef.current) {
+      stopLoop();
+      return;
+    }
+    // Esc inside a /walk session exits the walk WITHOUT applying or
+    // discarding the current block — remaining edits stay queued so
+    // the user can resume via /walk or commit via /apply later.
+    if (key.escape && walkthroughActive) {
+      setWalkthroughActive(false);
+      const remaining = pendingEdits.current.length;
+      setHistorical((prev) => [
+        ...prev,
+        {
+          id: `walk-esc-${Date.now()}`,
+          role: "info",
+          text:
+            remaining > 0
+              ? `▸ walk cancelled — ${remaining} block(s) still pending.`
+              : "▸ walk cancelled.",
+        },
+      ]);
       return;
     }
     // Edit-mode cycle: Shift+Tab flips review ↔ auto. Available any
@@ -830,6 +930,7 @@ export function App({
       !pendingPlan &&
       !stagedInput &&
       !pendingEditReview &&
+      !walkthroughActive &&
       !pendingCheckpoint &&
       !stagedCheckpointRevise &&
       !pendingChoice &&
@@ -868,6 +969,7 @@ export function App({
       !pendingPlan &&
       !stagedInput &&
       !pendingEditReview &&
+      !walkthroughActive &&
       !pendingCheckpoint &&
       !stagedCheckpointRevise &&
       !pendingChoice &&
@@ -1207,10 +1309,143 @@ export function App({
     setPendingPlan(null);
   }, []);
 
+  /**
+   * Cancel the active /loop. Centralized so every cancel-trigger
+   * (explicit /loop stop, Esc, /clear, /new, exit, the very first
+   * user-typed prompt while a loop is active) goes through one path.
+   * Idempotent — calling with no active loop is a no-op.
+   */
+  const stopLoop = useCallback(() => {
+    if (loopTimerRef.current) {
+      clearTimeout(loopTimerRef.current);
+      loopTimerRef.current = null;
+    }
+    setActiveLoop((cur) => {
+      if (!cur) return cur;
+      // Inform the user — the cancel may not have come from /loop stop
+      // (could be Esc, /new, or just typing). Better one extra info row
+      // than a silent disappearance.
+      setHistorical((prev) => [
+        ...prev,
+        {
+          id: `loop-stop-${Date.now()}`,
+          role: "info",
+          text: `▸ loop stopped (after ${cur.iter} iter${cur.iter === 1 ? "" : "s"}).`,
+        },
+      ]);
+      return null;
+    });
+  }, []);
+
+  /**
+   * Start a new /loop. Replaces any prior loop. The actual timer is
+   * scheduled by the useEffect downstream that watches `activeLoop`.
+   */
+  const startLoop = useCallback((intervalMs: number, prompt: string) => {
+    if (loopTimerRef.current) {
+      clearTimeout(loopTimerRef.current);
+      loopTimerRef.current = null;
+    }
+    setActiveLoop({
+      prompt,
+      intervalMs,
+      nextFireAt: Date.now() + intervalMs,
+      iter: 0,
+    });
+  }, []);
+
+  /**
+   * Mount the per-block walkthrough modal against the pending-edits
+   * queue. Returns the info text the slash handler should display.
+   * No-op (with explanatory message) when nothing is pending or we're
+   * not in code mode.
+   */
+  const startWalkthrough = useCallback((): string => {
+    if (!codeMode) {
+      return "/walk is only available inside `reasonix code`.";
+    }
+    if (pendingEdits.current.length === 0) {
+      return "nothing pending — nothing to walk through.";
+    }
+    setWalkthroughActive(true);
+    return `▸ walking ${pendingEdits.current.length} edit block(s) — y apply · n reject · a apply rest · A flip to AUTO · Esc cancels (keeps remaining queued).`;
+  }, [codeMode]);
+
+  /**
+   * onChoose for the walkthrough EditConfirm. Each pick mutates
+   * pendingEdits via the existing codeApply/codeDiscard helpers, which
+   * also bump pendingTick → the modal re-renders with the next block.
+   * When no blocks remain, the modal unmounts.
+   */
+  const handleWalkChoice = useCallback(
+    (choice: EditReviewChoice) => {
+      if (choice === "apply") {
+        const out = codeApply([1]);
+        setHistorical((prev) => [...prev, { id: `walk-${Date.now()}`, role: "info", text: out }]);
+      } else if (choice === "reject") {
+        const out = codeDiscard([1]);
+        setHistorical((prev) => [...prev, { id: `walk-${Date.now()}`, role: "info", text: out }]);
+      } else if (choice === "apply-rest-of-turn") {
+        // "apply rest" inside a walkthrough = commit every remaining
+        // block at once, then exit. Same end state as if the user had
+        // typed `/apply` outside the walk.
+        const out = codeApply();
+        setHistorical((prev) => [...prev, { id: `walk-${Date.now()}`, role: "info", text: out }]);
+        setWalkthroughActive(false);
+        return;
+      } else if (choice === "flip-to-auto") {
+        // Flip the gate first, then apply the current block, then exit
+        // the walk. Remaining blocks stay pending — the user can keep
+        // walking via /walk again or commit them with /apply.
+        setEditMode("auto");
+        saveEditMode("auto");
+        const out = codeApply([1]);
+        setHistorical((prev) => [
+          ...prev,
+          { id: `walk-${Date.now()}`, role: "info", text: out },
+          {
+            id: `walk-flip-${Date.now()}`,
+            role: "info",
+            text: "▸ flipped to AUTO mode — future edits will apply immediately. Walk exited.",
+          },
+        ]);
+        setWalkthroughActive(false);
+        return;
+      }
+      // After a per-block apply/reject, check if the queue is empty
+      // (codeApply/codeDiscard updated pendingEdits.current). If so,
+      // exit; otherwise stay mounted and EditConfirm re-renders against
+      // the new first block thanks to pendingTick.
+      if (pendingEdits.current.length === 0) setWalkthroughActive(false);
+    },
+    [codeApply, codeDiscard],
+  );
+
+  /** Snapshot for the `/loop` (no-arg) status branch. */
+  const getLoopStatus = useCallback(() => {
+    const cur = activeLoopRef.current;
+    if (!cur) return null;
+    return {
+      prompt: cur.prompt,
+      intervalMs: cur.intervalMs,
+      iter: cur.iter,
+      nextFireMs: Math.max(0, cur.nextFireAt - Date.now()),
+    };
+  }, []);
+
   const handleSubmit = useCallback(
     async (raw: string) => {
       let text = raw.trim();
-      if (!text || busy) return;
+      if (!text) return;
+      // Cancel-on-user-input: any user-typed submit cancels an active
+      // /loop, regardless of busy state. Loop-fired submits set the
+      // `loopFiringRef` flag so the timer's own re-submit doesn't
+      // self-cancel.
+      if (activeLoopRef.current && !loopFiringRef.current) {
+        stopLoop();
+      }
+      loopFiringRef.current = false;
+      if (busy) return;
 
       // @-mention picker intercept. When the picker is open (trailing
       // `@…` with file matches), Enter substitutes the highlighted
@@ -1409,6 +1644,10 @@ export function App({
             loop.disarmPro();
             setProArmed(false);
           },
+          startLoop,
+          stopLoop,
+          getLoopStatus,
+          startWalkthrough: codeMode ? startWalkthrough : undefined,
           jobs: codeMode?.jobs,
           postInfo: (text: string) =>
             setHistorical((prev) => [
@@ -1426,6 +1665,9 @@ export function App({
           refreshModels,
         });
         if (result.exit) {
+          // Tear down any active /loop before quitting so the timer
+          // doesn't try to fire after the process is on its way out.
+          if (activeLoopRef.current) stopLoop();
           transcriptRef.current?.end();
           exit();
           return;
@@ -1451,6 +1693,9 @@ export function App({
             clearPendingEdits(session ?? null);
             syncPendingCount();
           }
+          // /new also kills any active /loop: continuing to autofire
+          // a prompt against a freshly-wiped context would be confusing.
+          if (activeLoopRef.current) stopLoop();
           return;
         }
         if (result.clear) {
@@ -1461,6 +1706,7 @@ export function App({
             clearPendingEdits(session ?? null);
             syncPendingCount();
           }
+          if (activeLoopRef.current) stopLoop();
           return;
         }
         if (result.info) {
@@ -2213,8 +2459,69 @@ export function App({
       proArmed,
       persistPlanState,
       stdout,
+      stopLoop,
+      startLoop,
+      getLoopStatus,
+      startWalkthrough,
     ],
   );
+
+  // Mirror the latest handleSubmit so the /loop timer (set up below)
+  // calls the freshest closure on each firing — config changes during
+  // the loop (model, mode, etc.) take effect immediately.
+  useEffect(() => {
+    handleSubmitRef.current = handleSubmit;
+  }, [handleSubmit]);
+
+  // /loop timer. Re-runs whenever activeLoop's `nextFireAt` shifts —
+  // either because startLoop set a fresh schedule or because the
+  // previous timer fired and bumped the next-fire time. Cleanup
+  // clears the in-flight timer so a stopLoop / replacement doesn't
+  // leak a fire after cancel.
+  useEffect(() => {
+    if (!activeLoop) return;
+    const delay = Math.max(0, activeLoop.nextFireAt - Date.now());
+    const timer = setTimeout(async () => {
+      loopTimerRef.current = null;
+      // Skip the firing entirely when a prior turn is still running.
+      // Re-arm in 1s so the loop catches up the moment busy clears,
+      // rather than waiting a full interval after a slow turn.
+      if (busyRef.current) {
+        setActiveLoop((cur) => (cur ? { ...cur, nextFireAt: Date.now() + 1000 } : cur));
+        return;
+      }
+      const cur = activeLoopRef.current;
+      if (!cur) return;
+      const nextIter = cur.iter + 1;
+      // Schedule the NEXT firing now (independent of how long this
+      // turn takes). Keeps the cadence honest even when individual
+      // turns are slow.
+      setActiveLoop((c) =>
+        c ? { ...c, iter: nextIter, nextFireAt: Date.now() + cur.intervalMs } : c,
+      );
+      setHistorical((prev) => [
+        ...prev,
+        {
+          id: `loop-fire-${Date.now()}`,
+          role: "info",
+          text: `▸ /loop iter ${nextIter} → ${cur.prompt}`,
+        },
+      ]);
+      loopFiringRef.current = true;
+      try {
+        await handleSubmitRef.current?.(cur.prompt);
+      } catch {
+        // Persistent submission errors → kill the loop rather than
+        // spam the screen. User can re-issue /loop once they fix
+        // whatever's wrong.
+        stopLoop();
+      } finally {
+        loopFiringRef.current = false;
+      }
+    }, delay);
+    loopTimerRef.current = timer;
+    return () => clearTimeout(timer);
+  }, [activeLoop, stopLoop]);
 
   /**
    * ShellConfirm callback. Three outcomes, all of them ending with a
@@ -2739,6 +3046,7 @@ export function App({
           !!pendingPlan ||
           !!pendingShell ||
           !!pendingEditReview ||
+          walkthroughActive ||
           !!pendingCheckpoint ||
           !!stagedCheckpointRevise ||
           !!pendingChoice ||
@@ -2931,6 +3239,16 @@ export function App({
                 }
               }}
             />
+          ) : walkthroughActive && pendingEdits.current.length > 0 ? (
+            <EditConfirm
+              // pendingTick re-keys the modal so each apply/discard
+              // forces a remount with the NEW first block. Without it,
+              // EditConfirm's internal scroll state would persist
+              // across blocks, which is the wrong UX.
+              key={`walk-${pendingTick}`}
+              block={pendingEdits.current[0]!}
+              onChoose={handleWalkChoice}
+            />
           ) : (
             <>
               {codeMode ? (
@@ -2943,6 +3261,7 @@ export function App({
                   jobs={codeMode.jobs}
                 />
               ) : null}
+              {activeLoop ? <LoopStatusRow loop={activeLoop} /> : null}
               <PromptInput
                 value={input}
                 onChange={setInput}

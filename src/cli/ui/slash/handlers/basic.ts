@@ -1,3 +1,4 @@
+import { formatDuration, formatLoopStatus, parseLoopCommand } from "../../loop.js";
 import type { SlashHandler } from "../dispatch.js";
 
 const exit: SlashHandler = () => ({ exit: true });
@@ -89,6 +90,7 @@ const help: SlashHandler = () => ({
     "  /retry                   truncate & resend your last message (fresh sample from the model)",
     "  /apply [N|1,3|1-4]       (code mode) commit pending edit blocks (no arg → all; index → subset)",
     "  /discard [N|1,3|1-4]     (code mode) drop pending edits (no arg → all; index → subset)",
+    "  /walk                    (code mode) step through pending edits one block at a time (y/n per block, a apply rest, A flip AUTO)",
     "  /undo                    (code mode) roll back the latest non-undone edit batch",
     "  /history                 (code mode) list every edit batch this session",
     "  /show [id]               (code mode) dump a stored edit diff (newest when id omitted)",
@@ -103,6 +105,7 @@ const help: SlashHandler = () => ({
     "  /forget                  delete the current session from disk",
     "  /new                     start fresh: drop all context + clear scrollback",
     "  /clear                   clear displayed scrollback only (context kept — model still sees it)",
+    "  /loop <interval> <prompt> auto-resubmit <prompt> every <interval> (5s..6h). /loop stop · type anything to cancel.",
     "  /exit                    quit",
     "",
     "Shell shortcut:",
@@ -165,6 +168,41 @@ const retry: SlashHandler = (_args, loop) => {
   };
 };
 
+const loop: SlashHandler = (args, _loop, ctx) => {
+  if (!ctx.startLoop || !ctx.stopLoop || !ctx.getLoopStatus) {
+    return {
+      info: "/loop is only available in the interactive TUI (not in run/replay).",
+    };
+  }
+  const cmd = parseLoopCommand(args);
+  if (cmd.kind === "error") return { info: cmd.message };
+  if (cmd.kind === "stop") {
+    const wasActive = ctx.getLoopStatus() !== null;
+    ctx.stopLoop();
+    return {
+      info: wasActive ? "▸ loop stopped." : "no active loop to stop.",
+    };
+  }
+  if (cmd.kind === "status") {
+    const status = ctx.getLoopStatus();
+    if (!status) {
+      return {
+        info:
+          "no active loop. Start one with `/loop <interval> <prompt>` (e.g. /loop 30s npm test).\n" +
+          "Cancels on: /loop stop · Esc · /clear · /new · any user-typed prompt.",
+      };
+    }
+    return { info: `▸ ${formatLoopStatus(status.prompt, status.nextFireMs, status.iter)}` };
+  }
+  // kind === "start"
+  ctx.startLoop(cmd.intervalMs, cmd.prompt);
+  return {
+    info: `▸ loop started — re-submitting "${cmd.prompt}" every ${formatDuration(
+      cmd.intervalMs,
+    )}. Type anything (or /loop stop) to cancel.`,
+  };
+};
+
 export const handlers: Record<string, SlashHandler> = {
   exit,
   quit: exit,
@@ -176,4 +214,5 @@ export const handlers: Record<string, SlashHandler> = {
   "?": help,
   setup,
   retry,
+  loop,
 };

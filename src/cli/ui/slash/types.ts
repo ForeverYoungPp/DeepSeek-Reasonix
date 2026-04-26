@@ -213,6 +213,30 @@ export interface SlashContext {
   armPro?: () => void;
   /** Cancel a pending /pro arming. Mirrors `armPro` semantics. */
   disarmPro?: () => void;
+  /**
+   * Start a recurring auto-submit. Called by `/loop <interval> <prompt>`.
+   * Replaces any active loop. Caller (App.tsx) owns the timer + visible
+   * countdown; the slash handler just kicks it off.
+   */
+  startLoop?: (intervalMs: number, prompt: string) => void;
+  /** Stop the active loop. No-op if none. */
+  stopLoop?: () => void;
+  /**
+   * Snapshot of the active loop, for the `/loop` (no-args) status
+   * branch. Returns null when no loop is active.
+   */
+  getLoopStatus?: () => {
+    prompt: string;
+    intervalMs: number;
+    iter: number;
+    nextFireMs: number;
+  } | null;
+  /**
+   * Mount the `/walk` per-block walkthrough modal over the current
+   * pendingEdits queue. Returns the info text to surface (explanation
+   * when nothing's pending, or the started-walk banner).
+   */
+  startWalkthrough?: () => string;
 }
 
 export interface McpServerSummary {

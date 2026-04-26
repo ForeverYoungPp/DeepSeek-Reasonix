@@ -102,6 +102,11 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { cmd: "setup", summary: "reminds you to exit and run `reasonix setup`" },
   { cmd: "clear", summary: "clear visible scrollback only (log/context kept)" },
   { cmd: "new", summary: "start a fresh conversation (clear context + scrollback)" },
+  {
+    cmd: "loop",
+    argsHint: "<5s..6h> <prompt>  ·  stop  ·  (no args = status)",
+    summary: "auto-resubmit <prompt> every <interval> until you type something / Esc / /loop stop",
+  },
   { cmd: "exit", summary: "quit the TUI" },
   // Code-mode only
   {
@@ -115,6 +120,12 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     cmd: "discard",
     argsHint: "[N|N,M|N-M]",
     summary: "drop pending edit blocks without writing (no arg → all; indices → that subset)",
+    contextual: "code",
+  },
+  {
+    cmd: "walk",
+    summary:
+      "step through pending edits one block at a time (git-add-p style: y/n per block, a apply rest, A flip AUTO)",
     contextual: "code",
   },
   { cmd: "undo", summary: "roll back the last applied edit batch", contextual: "code" },
