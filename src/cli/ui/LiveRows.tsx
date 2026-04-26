@@ -1,4 +1,5 @@
-import { Box, Text } from "ink";
+import { Box, Text, useStdout } from "ink";
+// biome-ignore lint/style/useImportType: tsconfig jsx=react needs React as a runtime value (classic transform)
 import React from "react";
 import type { ApplyResult } from "../../code/edit-blocks.js";
 import type { EditMode } from "../../config.js";
@@ -19,10 +20,13 @@ export function StatusRow({ text }: { text: string }) {
   const tick = useTick();
   const elapsed = useElapsedSeconds();
   return (
-    <Box marginY={1}>
-      <Text color="magenta">{SPINNER_FRAMES[tick % SPINNER_FRAMES.length]}</Text>
-      <Text color="magenta">{` ${text}`}</Text>
-      <Text dimColor>{` ${elapsed}s`}</Text>
+    <Box marginY={1} paddingX={1}>
+      <Text color="#c4b5fd" bold>
+        {SPINNER_FRAMES[tick % SPINNER_FRAMES.length]}
+      </Text>
+      <Text>{"  "}</Text>
+      <Text color="#c4b5fd">{text}</Text>
+      <Text dimColor>{`  ·  ${elapsed}s`}</Text>
     </Box>
   );
 }
@@ -69,11 +73,11 @@ export function ModeStatusBar({
   // do) without the whole tutorial.
   if (planMode) {
     return (
-      <Box paddingX={1}>
+      <ModeBarFrame>
         <ModePill label="PLAN MODE" bg="red" flash={flash} />
         <Text dimColor>{"   writes gated · /plan off to leave"}</Text>
         {jobsTag}
-      </Box>
+      </ModeBarFrame>
     );
   }
   const isAuto = editMode === "auto";
@@ -85,10 +89,33 @@ export function ModeStatusBar({
       ? `${pendingCount} queued · y apply · n discard`
       : "edits queued · y apply · n discard";
   return (
-    <Box paddingX={1}>
+    <ModeBarFrame>
       <ModePill label={label} bg={bg} flash={flash} />
       <Text dimColor>{`   ${mid} · Shift+Tab to flip`}</Text>
       {jobsTag}
+    </ModeBarFrame>
+  );
+}
+
+/**
+ * Wraps the bottom mode/jobs row in a dim top rule + side padding
+ * so the modeline reads as its own zone, separate from the prompt
+ * input above. Keeps the live region border-free (the rule is a
+ * single Text row, not a bordered Box) so Ink's eraseLines miscount
+ * stays out of it.
+ */
+function ModeBarFrame({ children }: { children: React.ReactNode }) {
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const ruleWidth = Math.max(20, cols - 2);
+  return (
+    <Box flexDirection="column">
+      <Box paddingX={1}>
+        <Text color="#475569" dimColor>
+          {"╌".repeat(ruleWidth)}
+        </Text>
+      </Box>
+      <Box paddingX={1}>{children}</Box>
     </Box>
   );
 }
@@ -199,19 +226,25 @@ export function OngoingToolRow({
   const elapsed = useElapsedSeconds();
   const summary = summarizeToolArgs(tool.name, tool.args);
   return (
-    <Box marginY={1} flexDirection="column">
+    <Box marginY={1} flexDirection="column" paddingX={1}>
       <Box>
-        <Text color="cyan">{SPINNER_FRAMES[tick % SPINNER_FRAMES.length]}</Text>
-        <Text color="yellow">{` tool<${tool.name}> running…`}</Text>
-        <Text dimColor>{` ${elapsed}s`}</Text>
+        <Text color="#fcd34d" bold>
+          {SPINNER_FRAMES[tick % SPINNER_FRAMES.length]}
+        </Text>
+        <Text>{"  "}</Text>
+        <Text backgroundColor="#fcd34d" color="black" bold>
+          {` ⏵ ${tool.name} `}
+        </Text>
+        <Text color="#fcd34d">{" running"}</Text>
+        <Text dimColor>{`  ·  ${elapsed}s`}</Text>
       </Box>
       {progress ? (
-        <Box paddingLeft={2}>
-          <Text color="cyan">{renderProgressLine(progress)}</Text>
+        <Box paddingLeft={3}>
+          <Text color="#67e8f9">{renderProgressLine(progress)}</Text>
         </Box>
       ) : null}
       {summary ? (
-        <Box paddingLeft={2}>
+        <Box paddingLeft={3}>
           <Text dimColor>{summary}</Text>
         </Box>
       ) : null}

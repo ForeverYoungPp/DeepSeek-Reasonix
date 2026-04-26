@@ -1085,11 +1085,7 @@ function BlockView({ block, citations }: { block: Block; citations?: CitationMap
       if (DIAGRAM_LANGS.has(block.lang.toLowerCase())) {
         return <DiagramCodeBlock lang={block.lang} text={block.text} />;
       }
-      return (
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="yellow">{block.text}</Text>
-        </Box>
-      );
+      return <CodeBlockView lang={block.lang} text={block.text} />;
     case "edit-block":
       return <EditBlockRow block={block} />;
     case "table":
@@ -1357,6 +1353,29 @@ const DIAGRAM_VIEWER_HINT: Record<string, string> = {
  * user can tell at a glance that the terminal couldn't draw the
  * actual graph — they're looking at source to copy out.
  */
+/**
+ * Fenced code block. Round-cornered frame, language pill in the
+ * top-left, body in syntax-flavored colors. Lives inside event rows
+ * which Ink renders into `<Static>` (scrollback) — the eraseLines
+ * miscount that bans bordered Boxes from the *live* region doesn't
+ * apply here, since Static items render once and never repaint.
+ */
+function CodeBlockView({ lang, text }: { lang: string; text: string }) {
+  const langLabel = lang.trim();
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="#7dd3fc" paddingX={1}>
+      {langLabel ? (
+        <Box>
+          <Text backgroundColor="#7dd3fc" color="black" bold>
+            {` ${langLabel} `}
+          </Text>
+        </Box>
+      ) : null}
+      <Text color="#fde68a">{text}</Text>
+    </Box>
+  );
+}
+
 function DiagramCodeBlock({ lang, text }: { lang: string; text: string }) {
   const hint =
     DIAGRAM_VIEWER_HINT[lang.toLowerCase()] ?? "→ render with the matching viewer to view";

@@ -208,13 +208,22 @@ export const EventRow = React.memo(function EventRow({
           {event.stats ? (
             <>
               <Text>{"  "}</Text>
-              <Text backgroundColor="green" color="black" bold>
+              <Text backgroundColor={COLOR.assistant} color="black" bold>
                 {` ${event.stats.model.replace(/^deepseek-/, "")} `}
               </Text>
             </>
           ) : null}
         </Box>
-        <Box flexDirection="column" paddingLeft={2} marginTop={1}>
+        <Box
+          flexDirection="column"
+          marginTop={1}
+          borderStyle="single"
+          borderTop={false}
+          borderRight={false}
+          borderBottom={false}
+          borderColor={COLOR.assistant}
+          paddingLeft={1}
+        >
           {event.branch ? <BranchBlock branch={event.branch} /> : null}
           {event.reasoning ? <ReasoningBlock reasoning={event.reasoning} /> : null}
           {!isPlanStateEmpty(event.planState) ? (
@@ -226,7 +235,7 @@ export const EventRow = React.memo(function EventRow({
             <Text dimColor>(no content)</Text>
           )}
           {event.stats ? <StatsLine stats={event.stats} /> : null}
-          {event.repair ? <Text color="magenta">{event.repair}</Text> : null}
+          {event.repair ? <Text color={COLOR.accent}>{event.repair}</Text> : null}
         </Box>
       </Box>
     );
@@ -247,7 +256,16 @@ export const EventRow = React.memo(function EventRow({
             <ToolPill label={event.toolName ?? "?"} status="ok" />
             <Text dimColor>{"   diff:"}</Text>
           </Box>
-          <Box flexDirection="column" paddingLeft={2} marginTop={1}>
+          <Box
+            flexDirection="column"
+            marginTop={1}
+            borderStyle="single"
+            borderTop={false}
+            borderRight={false}
+            borderBottom={false}
+            borderColor={COLOR.tool}
+            paddingLeft={1}
+          >
             <EditFileDiff text={event.text} />
           </Box>
         </Box>
