@@ -1349,11 +1349,16 @@ const DIAGRAM_VIEWER_HINT: Record<string, string> = {
  * actual graph — they're looking at source to copy out.
  */
 /**
- * Heading renderer. H1/H2 get solid-bg pills (high contrast, like
- * page-section headers in editor outlines); H3+ stays bold + accent
- * color so deeply nested headings don't visually overpower the
- * content below them. Inline markdown still expands inside the
- * heading so `code` and *italic* render correctly.
+ * Heading renderer. Three tiers of solid-bg pill (cyan / violet /
+ * fuchsia, walking down the brand gradient) so the heading tree is
+ * scannable at a glance. H4+ collapses to bold accent text with a
+ * leading ▸ marker — four pills stacked would visually overwhelm
+ * the body, and headings rarely go that deep in answers anyway.
+ *
+ * Markdown sigils (#, ##, ###) are NEVER rendered literally inside
+ * the pill: showing `### 标题` defeats the whole "this is a heading"
+ * semantic. The sigil count goes into the pill's BG color choice;
+ * the title text stands on its own.
  */
 function HeadingView({
   level,
@@ -1368,7 +1373,7 @@ function HeadingView({
     return (
       <Box marginY={1}>
         <Text backgroundColor="#67e8f9" color="black" bold>
-          {` # ${text} `}
+          {` ${text} `}
         </Text>
       </Box>
     );
@@ -1377,7 +1382,7 @@ function HeadingView({
     return (
       <Box marginTop={1}>
         <Text backgroundColor="#c4b5fd" color="black" bold>
-          {` ## ${text} `}
+          {` ${text} `}
         </Text>
       </Box>
     );
@@ -1385,19 +1390,21 @@ function HeadingView({
   if (level === 3) {
     return (
       <Box marginTop={1}>
-        <Text bold color="#f0abfc">
-          {"### "}
-        </Text>
-        <Text bold>
-          <InlineMd text={text} citations={citations} />
+        <Text backgroundColor="#f0abfc" color="black" bold>
+          {` ${text} `}
         </Text>
       </Box>
     );
   }
   return (
-    <Text bold color="cyan">
-      <InlineMd text={text} citations={citations} />
-    </Text>
+    <Box marginTop={1}>
+      <Text bold color="#f0abfc">
+        ▸{" "}
+      </Text>
+      <Text bold>
+        <InlineMd text={text} citations={citations} />
+      </Text>
+    </Box>
   );
 }
 
