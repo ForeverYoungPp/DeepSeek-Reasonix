@@ -314,13 +314,25 @@ export const EventRow = React.memo(function EventRow({
     );
   }
   if (event.role === "info") {
-    // Strip a leading `▸ ` if the text already has one — keep the
-    // visual signal but match the new accent treatment.
-    const stripped = event.text.replace(/^▸\s*/, "");
+    // Detect tone from the text so the info row carries semantic
+    // weight: ▲/⚠ → warn, ✓ → ok, ✗/✖ → error, ↻ → reload, otherwise
+    // a neutral ▸. The leading glyph (if any) is consumed and the
+    // body renders dim.
+    const m = event.text.match(/^([▸▶▲⚠✓✗✖↻ⓘ])\s*(.*)$/s);
+    const lead = m?.[1] ?? "▸";
+    const body = m?.[2] ?? event.text;
+    let leadColor: string = COLOR.info;
+    if (lead === "▲" || lead === "⚠") leadColor = COLOR.warn;
+    else if (lead === "✓") leadColor = COLOR.ok;
+    else if (lead === "✗" || lead === "✖") leadColor = COLOR.err;
+    else if (lead === "↻") leadColor = COLOR.primary;
     return (
       <Box>
-        <Text color={COLOR.info}>▸ </Text>
-        <Text dimColor>{stripped}</Text>
+        <Text color={leadColor} bold>
+          {lead}
+        </Text>
+        <Text> </Text>
+        <Text dimColor>{body}</Text>
       </Box>
     );
   }
@@ -562,21 +574,36 @@ function EditFileDiff({ text }: { text: string }) {
 }
 
 function BranchBlock({ branch }: { branch: BranchSummary }) {
-  const per = branch.uncertainties
-    .map((u, i) => {
-      const marker = i === branch.chosenIndex ? "▸" : " ";
-      const t = (branch.temperatures[i] ?? 0).toFixed(1);
-      return `${marker} #${i} T=${t} u=${u}`;
-    })
-    .join("  ");
   return (
-    <Box>
-      <Text color="blue">
-        {"⎇ branched "}
-        <Text bold>{branch.budget}</Text>
-        {` samples → picked #${branch.chosenIndex}   `}
-        <Text dimColor>{per}</Text>
-      </Text>
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text backgroundColor="#93c5fd" color="black" bold>
+          {` ⎇ BRANCH ×${branch.budget} `}
+        </Text>
+        <Text>{"  "}</Text>
+        <Text color="#93c5fd">picked </Text>
+        <Text color="#93c5fd" bold>
+          #{branch.chosenIndex}
+        </Text>
+      </Box>
+      <Box paddingLeft={2} marginTop={1}>
+        {branch.uncertainties.map((u, i) => {
+          const chosen = i === branch.chosenIndex;
+          const t = (branch.temperatures[i] ?? 0).toFixed(1);
+          return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: branch index is positional and stable
+            <Text key={`b-${i}`}>
+              <Text color={chosen ? "#93c5fd" : "#475569"} bold={chosen}>
+                {chosen ? "▸ " : "  "}
+              </Text>
+              <Text color={chosen ? "#93c5fd" : "#94a3b8"} bold={chosen}>
+                {`#${i}`}
+              </Text>
+              <Text dimColor>{` T=${t}  u=${u}   `}</Text>
+            </Text>
+          );
+        })}
+      </Box>
     </Box>
   );
 }
@@ -825,19 +852,26 @@ function lastLine(s: string, maxChars: number): string {
 
 function StatsLine({ stats }: { stats: TurnStats }) {
   const hit = (stats.cacheHitRatio * 100).toFixed(1);
+  const hitColor =
+    stats.cacheHitRatio >= 0.7 ? "#4ade80" : stats.cacheHitRatio >= 0.4 ? "#fcd34d" : "#f87171";
   return (
-    <Box>
-      <Text dimColor>▏ </Text>
-      <Text dimColor>
-        {"cache "}
-        {hit}
-        {"% · tokens "}
-        {stats.usage.promptTokens}
-        {" → "}
-        {stats.usage.completionTokens}
-        {" · $"}
-        {stats.cost.toFixed(6)}
+    <Box marginTop={1}>
+      <Text color={hitColor} bold>
+        {`⌬ ${hit}%`}
       </Text>
+      <Text dimColor>{"  ·  "}</Text>
+      <Text color="#94a3b8">
+        {"in "}
+        <Text color="#67e8f9" bold>
+          {stats.usage.promptTokens}
+        </Text>
+        {" → out "}
+        <Text color="#c4b5fd" bold>
+          {stats.usage.completionTokens}
+        </Text>
+      </Text>
+      <Text dimColor>{"  ·  "}</Text>
+      <Text color="#86efac" bold>{`$${stats.cost.toFixed(6)}`}</Text>
     </Box>
   );
 }

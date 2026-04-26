@@ -18,30 +18,29 @@ import { Box, Text } from "ink";
 import React from "react";
 import type { TypedPlanState } from "../../harvest.js";
 
-type FieldColor = "cyan" | "green" | "yellow" | "red";
+type FieldColor = string;
 
 export function PlanStateBlock({ planState }: { planState: TypedPlanState }) {
   const fields: Array<[string, string[], FieldColor, boolean]> = [];
-  if (planState.subgoals.length) fields.push(["subgoals", planState.subgoals, "cyan", false]);
+  if (planState.subgoals.length) fields.push(["subgoals", planState.subgoals, "#67e8f9", false]);
   if (planState.hypotheses.length)
-    fields.push(["hypotheses", planState.hypotheses, "green", false]);
+    fields.push(["hypotheses", planState.hypotheses, "#86efac", false]);
   if (planState.uncertainties.length)
-    fields.push(["uncertainties", planState.uncertainties, "yellow", false]);
+    fields.push(["uncertainties", planState.uncertainties, "#fcd34d", false]);
   if (planState.rejectedPaths.length)
-    fields.push(["rejected", planState.rejectedPaths, "red", true]);
+    fields.push(["rejected", planState.rejectedPaths, "#94a3b8", true]);
   if (fields.length === 0) return null;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
       {fields.map(([label, items, color, dim]) => (
-        <Text key={label}>
-          <Text color={color} bold dimColor={dim}>
-            {"‹ "}
-            {label}
+        <Box key={label}>
+          <Text backgroundColor={color} color="black" bold dimColor={dim}>
+            {` ${label} ${items.length} `}
           </Text>
-          <Text dimColor>{` (${items.length})`}</Text>
-          <Text>{`: ${items.join(" · ")}`}</Text>
-        </Text>
+          <Text>{"  "}</Text>
+          <Text dimColor={dim}>{items.join(" · ")}</Text>
+        </Box>
       ))}
     </Box>
   );
