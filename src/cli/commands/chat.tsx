@@ -290,42 +290,23 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
     rewriteSession(opts.session, []);
   }
 
-  // Clear the terminal viewport AND scrollback before mounting Ink
-  // so the user lands on a fresh canvas — no leftover prompt /
-  // last-command output bleeding into the TUI's first frame.
-  //   \x1b[2J — erase visible screen
-  //   \x1b[3J — erase scrollback (xterm extension; safely ignored
-  //             by terminals that don't implement it)
-  //   \x1b[H  — cursor home
-  // Stdout-only — stderr stays untouched so any startup diagnostics
-  // we wrote earlier (loadDotenv, MCP connect logs) aren't lost.
-  // Skipped on non-TTY runs (CI, piped output) where ANSI sequences
-  // would leak into the captured output.
-  if (process.stdout.isTTY) {
-    process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
-  }
-
-  // Resize handler — hard-clear the visible viewport whenever the
-  // terminal width changes. Without this, Ink's eraseLines() counts
-  // the OLD frame using its stored row count (which was right for
-  // the old width) and the NEW frame renders on top — leaving stale
-  // copies of the StatsPanel + metrics at every resize step. We
-  // prepend the listener so our clear runs BEFORE Ink's own resize
-  // handler kicks in; Ink's next render then fills the cleared
-  // viewport instead of overlaying ghosts. Scrollback (\x1b[3J) is
-  // intentionally untouched so chat history above stays scrollable.
-  let lastCols = process.stdout.columns ?? 0;
-  const onResize = () => {
-    if (!process.stdout.isTTY) return;
-    const cols = process.stdout.columns ?? 0;
-    if (cols === lastCols) return;
-    lastCols = cols;
-    process.stdout.write("\x1b[2J\x1b[H");
-  };
-  if (process.stdout.isTTY && typeof process.stdout.prependListener === "function") {
-    process.stdout.prependListener("resize", onResize);
-  } else if (process.stdout.isTTY) {
-    process.stdout.on("resize", onResize);
+  // Switch to the terminal's alternate screen buffer (DECSET 1049).
+  // This is what vim, less, htop, and lazygit do: own the entire
+  // visible screen until exit, then restore the user's shell scroll-
+  // back unmodified. Critically, alt-screen also fixes the resize
+  // ghost-stacking bug — Ink's eraseLines counts logical lines, not
+  // visible rows after wrap, so on resize it leaves stale copies of
+  // the live region behind. With alt-screen, the terminal manages
+  // the viewport itself and resize behaves cleanly: each frame
+  // overwrites the last and there's no scrollback to leak ghosts
+  // into. Stdout-only — stderr is untouched so diagnostics still
+  // surface. Skipped on non-TTY (CI / piped) so the sequence
+  // doesn't end up in captured output.
+  const usedAltScreen = !!process.stdout.isTTY;
+  if (usedAltScreen) {
+    // Sequence: enter alt-screen, hide cursor (Ink will re-show it
+    // when it owns rendering), cursor home.
+    process.stdout.write("\x1b[?1049h\x1b[H");
   }
 
   const { waitUntilExit } = render(
@@ -345,7 +326,10 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
   try {
     await waitUntilExit();
   } finally {
-    process.stdout.removeListener("resize", onResize);
     for (const c of clients) await c.close();
+    // Leave alt-screen → restore the user's pre-launch shell view.
+    // \x1b[?1049l also moves cursor back to wherever the main
+    // screen's cursor was when we entered.
+    if (usedAltScreen) process.stdout.write("\x1b[?1049l");
   }
 }

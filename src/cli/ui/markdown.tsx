@@ -385,6 +385,28 @@ export function parseCitationUrl(url: string): CitationParts | null {
   return { path: trimmed };
 }
 
+/**
+ * Common typo-equivalents per file extension. When the model cites
+ * `foo.ts` but the real file is `foo.tsx`, the validator still
+ * resolves it via this map. Symmetric pairs (`.ts` ↔ `.tsx`,
+ * `.js` ↔ `.jsx`, etc.) keep both directions working.
+ */
+const SIBLING_EXTENSIONS = new Map<string, ReadonlyArray<string>>([
+  [".ts", [".tsx", ".mts", ".cts"]],
+  [".tsx", [".ts"]],
+  [".js", [".jsx", ".mjs", ".cjs"]],
+  [".jsx", [".js"]],
+  [".mjs", [".js", ".cjs"]],
+  [".cjs", [".js", ".mjs"]],
+  [".mts", [".ts"]],
+  [".cts", [".ts"]],
+]);
+
+function extOf(p: string): string {
+  const m = /\.[^./\\]+$/.exec(p);
+  return m ? m[0] : "";
+}
+
 export function validateCitation(url: string, projectRoot: string): CitationStatus {
   const parts = parseCitationUrl(url);
   if (!parts || !parts.path) return { ok: false, reason: "empty path" };
@@ -396,13 +418,30 @@ export function validateCitation(url: string, projectRoot: string): CitationStat
   // absolute references like `/etc/hosts` in a code citation are vanishingly
   // rare — if anyone needs one we can revisit.
   const normalized = parts.path.replace(/^[/\\]+/, "");
-  const fullPath = isAbsolute(normalized) ? normalized : join(projectRoot, normalized);
-  let stat: ReturnType<typeof statSync>;
-  try {
-    stat = statSync(fullPath);
-  } catch {
-    return { ok: false, reason: "file not found" };
+  const baseFullPath = isAbsolute(normalized) ? normalized : join(projectRoot, normalized);
+  // Sibling-extension fallback: models routinely cite `foo.ts` when
+  // the actual file is `foo.tsx` (or `.js`/`.jsx`/`.mjs`/`.cjs`).
+  // The citation is the model's intent — it's right about WHICH
+  // file, just typed the wrong extension. Probing siblings keeps a
+  // genuinely missing path flagged while letting `.ts`↔`.tsx` slip
+  // through silently.
+  const siblings = SIBLING_EXTENSIONS.get(extOf(baseFullPath)) ?? [];
+  const candidates = [
+    baseFullPath,
+    ...siblings.map((ext) => baseFullPath.replace(/\.[^./\\]+$/, ext)),
+  ];
+  let fullPath = baseFullPath;
+  let stat: ReturnType<typeof statSync> | null = null;
+  for (const candidate of candidates) {
+    try {
+      stat = statSync(candidate);
+      fullPath = candidate;
+      break;
+    } catch {
+      // try next candidate
+    }
   }
+  if (!stat) return { ok: false, reason: "file not found" };
   if (!stat.isFile()) return { ok: false, reason: "not a file" };
   if (parts.startLine === undefined) return { ok: true };
   let lineCount: number;
