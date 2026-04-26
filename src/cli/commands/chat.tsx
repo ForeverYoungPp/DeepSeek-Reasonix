@@ -290,24 +290,16 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
     rewriteSession(opts.session, []);
   }
 
-  // Visible-only clear at startup so the user lands on a fresh
-  // canvas. We deliberately DON'T send \x1b[3J (erase scrollback)
-  // because some terminal emulators — notably VSCode's integrated
-  // terminal — interpret it as "wipe everything we have", and the
-  // user then can't scroll up to see anything that came before.
-  // Visible clear (\x1b[2J + cursor home) is portable and
-  // sufficient: the previous shell prompt scrolls up into
-  // scrollback rather than vanishing.
-  if (process.stdout.isTTY) {
-    process.stdout.write("\x1b[2J\x1b[H");
-  }
-
-  // No resize listener. Earlier versions wrote \x1b[2J on every
-  // resize event to neutralize Ink's eraseLines miscount, but on
-  // VSCode + similar terminals that 2J also wipes the chat history
-  // sitting in scrollback above the live region. Resize ghosts are
-  // an accepted known limitation now — `/clear` is the documented
-  // workaround when the live region accumulates duplicate panels.
+  // No startup clear, no resize listener. Earlier attempts wrote
+  // various combinations of \x1b[2J / \x1b[3J / cursor-home to
+  // present a 'clean canvas' on launch and to neutralize Ink's
+  // eraseLines miscount on resize, but on xterm.js-based terminals
+  // (VSCode integrated terminal in particular) those sequences
+  // interfere with scrollback in ways that make wheel-up scroll
+  // dead. Letting Ink mount directly leaves the user's previous
+  // shell prompt visible above (scrolling up just works) and
+  // accepts the resize-ghost / launch-noise tradeoffs as known
+  // limitations — `/clear` is the manual reset.
 
   const { waitUntilExit } = render(
     <Root
