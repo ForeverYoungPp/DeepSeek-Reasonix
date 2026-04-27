@@ -5,13 +5,15 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.11.1] — 2026-04-27
 
-**Headline:** Workspace-switching, end to end. Four real-use bugs
-that all hit the same scenario — `Esc` poisoned the next turn,
-Chinese-Windows shell errors came back as mojibake, the markdown
-renderer ate `\TEST` out of `F:\TEST1`, and the model had no idea
-how to change directories. Plus two new ways to do it: `/cwd <path>`
-the user types, and `change_workspace` the model calls (always
-gated on an explicit confirmation modal — no auto-switching).
+**Headline:** Workspace-switching, end to end, plus a `/init` that
+synthesizes a baseline REASONIX.md so new projects start with
+context instead of cold. Four real-use bugs all hit the same
+scenario — `Esc` poisoned the next turn, Chinese-Windows shell
+errors came back as mojibake, the markdown renderer ate `\TEST`
+out of `F:\TEST1`, and the model had no idea how to change
+directories. Plus two new ways to switch: `/cwd <path>` the user
+types, and `change_workspace` the model calls (always gated on
+an explicit confirmation modal — no auto-switching).
 
 ### Fixed
 
@@ -91,8 +93,20 @@ gated on an explicit confirmation modal — no auto-switching).
   gitignore-aware project tour is also frozen at launch so the
   prefix cache stays valid; the slash output notes it for users
   switching to a structurally different project.
+- **`/init`** — model-driven REASONIX.md generator. The slash
+  emits a structured user-turn prompt (via the `resubmit` channel)
+  that hard-constrains the model to a fact-only document with
+  Stack / Layout / Commands / Conventions / Watch out for sections,
+  capped at 80 lines / 3KB so REASONIX.md doesn't bloat the system
+  prompt every launch. Reuses the existing filesystem tools (no new
+  pipeline) and the result lands as a pending edit in the normal
+  review queue, so the user audits before it hits disk. Refuses to
+  overwrite an existing REASONIX.md without `/init force`. Removes
+  the friction of having to hand-author a project memory file —
+  Claude Code's `/init` parity, scoped to the structure REASONIX
+  expects.
 
-
+## [0.11.0] — 2026-04-27
 
 **Headline:** Local semantic search lands as an opt-in pillar — Ollama-
 backed embedding index, `reasonix index` CLI with progress spinner, a
