@@ -1,0 +1,126 @@
+/**
+ * `/init` — auto-generate a baseline REASONIX.md by asking the model
+ * to scan the project and synthesize a concise summary.
+ *
+ * Mechanism: the slash handler injects a structured user-turn prompt
+ * (via `resubmit`) that hard-constrains the model to write a short,
+ * fact-only document and stop. It uses the same filesystem tools the
+ * model already has — no new tool, no new pipeline. The model's output
+ * lands as an `edit_file` (empty SEARCH = create new) or `write_file`
+ * SEARCH/REPLACE block, which goes through the normal /apply review
+ * gate so the user can audit before the file hits disk.
+ *
+ * Why this shape rather than a CLI command: REASONIX.md goes into
+ * the system prompt every session, so its content has to fit. A
+ * model-driven generator that runs inside the same loop the user
+ * will use later gives the most consistent output, and reusing the
+ * existing edit-review flow means we don't have to invent a
+ * separate "review the generated doc" UI.
+ */
+
+import { existsSync } from "node:fs";
+import * as pathMod from "node:path";
+import type { SlashHandler } from "../dispatch.js";
+
+/**
+ * The init brief. Sent verbatim as a user turn (via resubmit). Hard
+ * constraints up top because flash will skim and the structure of
+ * the document matters for system-prompt budget. The "STOP after
+ * writing" line is load-bearing — without it the model will follow
+ * up with "want me to also …" and burn turns on noise.
+ */
+const INIT_PROMPT = [
+  "# Task: Initialize REASONIX.md",
+  "",
+  "I want you to generate a REASONIX.md at the project root that captures",
+  "the working knowledge a future Reasonix session needs to be productive",
+  "here. This file is auto-pinned into your system prompt every launch,",
+  "so its size and accuracy matter.",
+  "",
+  "## Hard constraints (do NOT relax these)",
+  "",
+  "- **Length cap: ≤ 80 lines / 3KB total.** Be concise. If you can't fit a",
+  "  section, drop it.",
+  "- **Only document things you can verify by reading files.** Do NOT",
+  "  speculate about architectural intent, future roadmap, or design",
+  "  rationale. If it isn't obvious from the code, leave it out.",
+  "- **No placeholder text.** No 'TODO: describe X', no 'Add more here'.",
+  "  Either state a fact or omit the section.",
+  "",
+  "## Procedure",
+  "",
+  "1. Read the top of any existing README* file.",
+  "2. Read the manifest (package.json / Cargo.toml / pyproject.toml /",
+  "   go.mod / etc.) — pick whichever exists.",
+  "3. `directory_tree` 1-2 levels deep on the project root, skipping",
+  "   common build/dependency dirs (node_modules, dist, target, .git,",
+  "   venv, __pycache__).",
+  "4. Identify: primary language + framework, top-level layout, test",
+  "   runner, lint/format setup, build/run/test scripts, any non-obvious",
+  "   convention with visible evidence (commit message format, import",
+  "   order, naming pattern).",
+  "5. Write REASONIX.md with the sections below, skipping any you can't",
+  "   fill from evidence.",
+  "",
+  "## Sections to use (skip ones with no evidence)",
+  "",
+  "- **Stack** — language + framework + 3-5 key deps. One line each.",
+  "- **Layout** — top-level dirs and what lives in each. One line each.",
+  "- **Commands** — verbatim from `scripts` block (or equivalent):",
+  "  build / test / lint / typecheck / dev / format. Whatever exists.",
+  "- **Conventions** — only things visible in the code. Examples:",
+  "  '*.test.ts colocated with source', 'named exports only',",
+  "  'commits use Conventional Commits prefix'. If you can't find any",
+  "  CONVENTION evidence, omit the whole section.",
+  "- **Watch out for** — gotchas a new contributor would benefit from",
+  "  knowing BEFORE editing. Examples: 'edit_file SEARCH must match",
+  "  byte-for-byte', 'this dir is generated, don't edit by hand'.",
+  "  Omit if you find nothing concrete.",
+  "",
+  "## Output",
+  "",
+  "Write the result to `REASONIX.md` in the project root using the",
+  "filesystem tools (edit_file with empty SEARCH if creating new,",
+  "write_file if overwriting). After writing, STOP — do not summarize",
+  "what you did, do not propose follow-up tasks. The user will review",
+  "the pending edit via /apply.",
+  "",
+  "Start now.",
+].join("\n");
+
+const init: SlashHandler = (args, _loop, ctx) => {
+  if (!ctx.codeRoot) {
+    return {
+      info: [
+        "/init only works in code mode (it needs filesystem tools).",
+        "Run `reasonix code [path]` to start a session rooted at the",
+        "project you want to initialize, then run /init.",
+      ].join("\n"),
+    };
+  }
+  const force = (args[0] ?? "").toLowerCase() === "force";
+  const target = pathMod.join(ctx.codeRoot, "REASONIX.md");
+  if (existsSync(target) && !force) {
+    return {
+      info: [
+        `▸ REASONIX.md already exists at ${target}`,
+        "",
+        "  /init force   regenerate from scratch (overwrites)",
+        "",
+        "  Or edit it by hand — it's just markdown. The current file is",
+        "  pinned into the system prompt every launch as-is.",
+      ].join("\n"),
+    };
+  }
+  return {
+    info: [
+      "▸ /init — model will scan the project and synthesize REASONIX.md.",
+      "  The result lands as a pending edit; review with /apply or /walk.",
+    ].join("\n"),
+    resubmit: INIT_PROMPT,
+  };
+};
+
+export const handlers: Record<string, SlashHandler> = {
+  init,
+};

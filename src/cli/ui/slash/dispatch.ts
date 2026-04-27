@@ -2,6 +2,7 @@ import type { CacheFirstLoop } from "../../../loop.js";
 import { handlers as adminHandlers } from "./handlers/admin.js";
 import { handlers as basicHandlers } from "./handlers/basic.js";
 import { handlers as editsHandlers } from "./handlers/edits.js";
+import { handlers as initHandlers } from "./handlers/init.js";
 import { handlers as jobsHandlers } from "./handlers/jobs.js";
 import { handlers as mcpHandlers } from "./handlers/mcp.js";
 import { handlers as memoryHandlers } from "./handlers/memory.js";
@@ -33,6 +34,7 @@ const HANDLERS: Record<string, SlashHandler> = {
   ...adminHandlers,
   ...basicHandlers,
   ...editsHandlers,
+  ...initHandlers,
   ...jobsHandlers,
   ...mcpHandlers,
   ...memoryHandlers,

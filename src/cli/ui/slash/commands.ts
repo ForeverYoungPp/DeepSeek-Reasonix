@@ -120,6 +120,14 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { cmd: "exit", summary: "quit the TUI" },
   // Code-mode only
   {
+    cmd: "init",
+    argsHint: "[force]",
+    summary:
+      "scan the project and synthesize a baseline REASONIX.md (model writes; review with /apply). `force` overwrites an existing file.",
+    contextual: "code",
+    argCompleter: ["force"],
+  },
+  {
     cmd: "apply",
     argsHint: "[N|N,M|N-M]",
     summary:
