@@ -543,6 +543,34 @@ body {
   background: var(--bg-3);
   color: var(--fg-2);
 }
+.pill-active {
+  background: rgba(103, 232, 249, 0.22);
+  color: var(--primary);
+}
+
+/* ---------- Key/value rows (compact metadata layout) ---------- */
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg-1);
+  font-family: var(--mono);
+}
+.kv > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.kv-key {
+  display: inline-block;
+  min-width: 84px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
 
 /* ---------- Tables ---------- */
 

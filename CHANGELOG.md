@@ -3,6 +3,42 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.9] — 2026-04-28
+
+**Headline:** Semantic indexing without leaving the session.
+Previously you had to exit the TUI, run `reasonix index`, wait,
+then re-enter — every change. Now there's a Semantic panel in
+the dashboard that drives `buildIndex` in the background and
+shows live progress.
+
+### Server
+
+- `src/server/api/semantic.ts` — new endpoint set:
+  - `GET  /api/semantic`        → Ollama probe + index existence
+                                   + current job snapshot
+  - `POST /api/semantic/start`  → kick off `buildIndex({ rebuild })`
+                                   fire-and-forget, returns 202
+  - `POST /api/semantic/stop`   → flag job as aborting (advisory;
+                                   `buildIndex` doesn't honor a
+                                   signal yet, lands when it does)
+- Per-root `JobRecord` map (module-scoped) tracks phase
+  (scan/embed/write/done/error) + counters (filesScanned,
+  chunksTotal, chunksDone, …) updated via `onProgress`.
+
+### Dashboard
+
+- New **Semantic** sidebar tab. Polls `/api/semantic` every 1.2s
+  while a job is running, every 5s when idle.
+- Surfaces Ollama daemon reachability + listed models, current
+  index existence, and the live job: phase pill, file/chunk
+  counters, percentage progress bar, elapsed seconds, last
+  result on completion, error text on failure.
+- Buttons: **Index (incremental)**, **Rebuild (wipe + full)**,
+  **Stop**. Disabled appropriately when Ollama isn't reachable
+  or another job is running. Inline guidance on missing daemon.
+- Standalone `reasonix dashboard` mode shows a polite "code-mode
+  required" empty state — no project root, nothing to index.
+
 ## [0.12.8] — 2026-04-28
 
 **Fix:** the dashboard row in 0.12.7 collapsed the URL and

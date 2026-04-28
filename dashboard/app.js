@@ -2722,6 +2722,195 @@ function SkillsPanel() {
 
 // ---------- MCP ----------
 
+// ---------- Semantic index ----------
+
+function SemanticPanel() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [info, setInfo] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api("/semantic");
+      setData(r);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, []);
+
+  // Poll fast while a job is running, slow when idle. The fast cadence
+  // keeps the progress bar feeling live (chunks/sec is usually high
+  // enough that 1s polls show clear motion); the idle cadence keeps
+  // the panel responsive to a freshly-started Ollama daemon without
+  // burning network on the loop.
+  useEffect(() => {
+    load();
+    const phase = data?.job?.phase;
+    const running = phase === "scan" || phase === "embed" || phase === "write";
+    const ms = running ? 1200 : 5000;
+    const id = setInterval(load, ms);
+    return () => clearInterval(id);
+  }, [load, data?.job?.phase]);
+
+  const start = useCallback(
+    async (rebuild) => {
+      setBusy(true);
+      setError(null);
+      setInfo(null);
+      try {
+        await api("/semantic/start", { method: "POST", body: { rebuild: !!rebuild } });
+        setInfo(rebuild ? "rebuild started" : "incremental index started");
+        await load();
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load],
+  );
+
+  const stop = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/semantic/stop", { method: "POST", body: {} });
+      setInfo("stopping requested — current chunk batch will finish first");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [load]);
+
+  if (!data && !error) return html`<div class="boot">loading semantic status…</div>`;
+  if (error && !data) return html`<div class="notice err">${error}</div>`;
+
+  if (data && !data.attached) {
+    return html`
+      <div>
+        <div class="panel-header">
+          <h2 class="panel-title">Semantic</h2>
+          <span class="panel-subtitle">code-mode required</span>
+        </div>
+        <div class="empty">${data.reason}</div>
+      </div>
+    `;
+  }
+
+  const job = data.job;
+  const phase = job?.phase;
+  const running = phase === "scan" || phase === "embed" || phase === "write";
+  const ollamaOk = data.ollama?.ok === true;
+  const ollamaModels = ollamaOk ? (data.ollama.models ?? []) : [];
+
+  return html`
+    <div>
+      <div class="panel-header">
+        <h2 class="panel-title">Semantic</h2>
+        <span class="panel-subtitle">${data.index.exists ? "index built" : "no index yet"}</span>
+      </div>
+      ${info ? html`<div class="notice">${info}</div>` : null}
+      ${error ? html`<div class="notice err">${error}</div>` : null}
+
+      <div class="section-title">Status</div>
+      <div class="kv">
+        <div><span class="kv-key">project</span><code>${data.root}</code></div>
+        <div>
+          <span class="kv-key">ollama</span>
+          ${
+            ollamaOk
+              ? html`<span class="muted">reachable · ${ollamaModels.length} model(s)${
+                  ollamaModels.length > 0
+                    ? ` · ${ollamaModels.slice(0, 3).join(", ")}${ollamaModels.length > 3 ? "…" : ""}`
+                    : ""
+                }</span>`
+              : html`<span class="err">not reachable — ${data.ollama?.error ?? "unknown"}</span>`
+          }
+        </div>
+        <div>
+          <span class="kv-key">index</span>
+          ${data.index.exists ? html`<span class="muted">present at <code>.reasonix/semantic/</code></span>` : html`<span class="muted">none — run an index to enable <code>semantic_search</code></span>`}
+        </div>
+      </div>
+
+      <div class="section-title">Job</div>
+      ${job ? html`<${SemanticJobView} job=${job} running=${running} />` : html`<div class="muted">No job has run in this dashboard yet.</div>`}
+
+      <div class="row" style="margin-top: 14px;">
+        <button class="primary" disabled=${busy || running || !ollamaOk} onClick=${() => start(false)}>Index (incremental)</button>
+        <button disabled=${busy || running || !ollamaOk} onClick=${() => start(true)}>Rebuild (wipe + full)</button>
+        <button disabled=${busy || !running} onClick=${stop}>Stop</button>
+      </div>
+      ${
+        !ollamaOk
+          ? html`<div class="muted" style="margin-top: 10px; font-size: 12px;">
+            Install Ollama from <a href="https://ollama.com" target="_blank" rel="noreferrer">ollama.com</a>, run <code>ollama serve</code>, then <code>ollama pull nomic-embed-text</code>. Refresh this panel — buttons enable once the daemon answers.
+          </div>`
+          : null
+      }
+    </div>
+  `;
+}
+
+function SemanticJobView({ job, running }) {
+  const phaseLabel =
+    {
+      scan: "scanning files",
+      embed: "embedding chunks",
+      write: "writing index",
+      done: "done",
+      error: "error",
+    }[job.phase] ?? job.phase;
+  const total = job.chunksTotal ?? 0;
+  const doneN = job.chunksDone ?? 0;
+  const ratio = total > 0 ? Math.min(1, doneN / total) : 0;
+  const elapsed = ((Date.now() - job.startedAt) / 1000).toFixed(1);
+
+  return html`
+    <div class="kv">
+      <div><span class="kv-key">phase</span>
+        <span class=${`pill ${job.phase === "error" ? "pill-err" : running ? "pill-active" : "pill-dim"}`}>${phaseLabel}</span>
+        ${job.aborted ? html`<span class="pill pill-warn" style="margin-left: 6px;">stopping</span>` : null}
+        <span class="muted" style="margin-left: 8px;">${elapsed}s</span>
+      </div>
+      ${
+        job.filesScanned !== null && job.filesScanned !== undefined
+          ? html`<div><span class="kv-key">files</span>scanned ${job.filesScanned}${
+              job.filesChanged != null ? ` · changed ${job.filesChanged}` : ""
+            }${job.filesSkipped ? ` · skipped ${job.filesSkipped}` : ""}</div>`
+          : null
+      }
+      ${
+        total > 0
+          ? html`
+            <div>
+              <span class="kv-key">chunks</span>${doneN} / ${total} (${(ratio * 100).toFixed(0)}%)
+            </div>
+            <div class="bar" style="margin-top: 4px;">
+              <div class="fill" style=${`width: ${(ratio * 100).toFixed(1)}%; background: var(--primary);`}></div>
+            </div>
+          `
+          : null
+      }
+      ${
+        job.error
+          ? html`<div><span class="kv-key">error</span><span class="err">${job.error}</span></div>`
+          : null
+      }
+      ${
+        job.result
+          ? html`<div><span class="kv-key">result</span>added ${job.result.chunksAdded} · removed ${job.result.chunksRemoved}${
+              job.result.chunksSkipped ? ` · failed ${job.result.chunksSkipped}` : ""
+            } · ${(job.result.durationMs / 1000).toFixed(1)}s</div>`
+          : null
+      }
+    </div>
+  `;
+}
+
 function McpPanel() {
   const [data, setData] = useState(null);
   const [specs, setSpecs] = useState(null);
@@ -3515,6 +3704,14 @@ const TABS = [
     name: "System",
     glyph: "+",
     panel: () => html`<${SystemPanel} />`,
+    ready: true,
+    badge: null,
+  },
+  {
+    id: "semantic",
+    name: "Semantic",
+    glyph: "≈",
+    panel: () => html`<${SemanticPanel} />`,
     ready: true,
     badge: null,
   },

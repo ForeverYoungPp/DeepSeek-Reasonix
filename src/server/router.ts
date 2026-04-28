@@ -23,6 +23,7 @@ import { handleModal } from "./api/modal.js";
 import { handleOverview } from "./api/overview.js";
 import { handlePermissions } from "./api/permissions.js";
 import { handlePlans } from "./api/plans.js";
+import { handleSemantic } from "./api/semantic.js";
 import { handleSessions } from "./api/sessions.js";
 import { handleSettings } from "./api/settings.js";
 import { handleSkills } from "./api/skills.js";
@@ -86,6 +87,8 @@ export async function handleApi(
         return await handleFiles(method, rest, body, ctx);
       case "file":
         return await handleFile(method, rest, body, ctx);
+      case "semantic":
+        return await handleSemantic(method, rest, body, ctx);
       default:
         return { status: 404, body: { error: `no such endpoint: /${head}` } };
     }
