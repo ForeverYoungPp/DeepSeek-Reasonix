@@ -43,14 +43,21 @@
   ];
 
   // ──────────────────────────────────────────────────────────────────
-  // Header bar — `◈ REASONIX v0.6.0  v4-flash  REVIEW  max  …  turn 1 · /help`
+  // Header bar — `◈ REASONIX v0.12.x  v4-flash  REVIEW  max  …  turn 1 · /help`
+  // Version comes from the i18n script (which fetched it from npm).
+  // Falls back to a baked-in default before the fetch lands.
   // ──────────────────────────────────────────────────────────────────
+  function currentVersion() {
+    const r = window.Reasonix;
+    return (r && typeof r.version === "function" ? r.version() : null) || "0.12";
+  }
+
   function buildHeader(turn) {
     const h = el("div", "thead");
     h.innerHTML =
       '<span class="tw-mark">◈</span>' +
       '<span class="tw-name">REASONIX</span>' +
-      '<span class="tw-ver">v0.6.0</span>' +
+      `<span class="tw-ver">v${currentVersion()}</span>` +
       '<span class="tw-model">v4-flash</span>' +
       '<span class="tw-pill review">REVIEW</span>' +
       '<span class="tw-effort">max</span>' +
@@ -371,6 +378,15 @@
 
     if (window.Reasonix && typeof window.Reasonix.onLangChange === "function") {
       window.Reasonix.onLangChange(() => runCycle(root));
+    }
+    // npm version arrives async after first paint — patch the header's
+    // version pill in place so we don't have to re-run the whole
+    // animation just to update one number.
+    if (window.Reasonix && typeof window.Reasonix.onVersionChange === "function") {
+      window.Reasonix.onVersionChange((v) => {
+        const pill = root.querySelector(".tw-ver");
+        if (pill) pill.textContent = "v" + v;
+      });
     }
 
     document.querySelectorAll(REPLAY_SEL).forEach((btn) => {

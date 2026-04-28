@@ -16,7 +16,7 @@
       "nav.benchmarks": "Benchmarks",
       "nav.github": "GitHub",
 
-      "hero.badge": "v0.6 · DeepSeek V4 · cache-first",
+      "hero.badge": "v{version} · DeepSeek V4 · cache-first",
       "hero.title.line1": "DeepSeek-native",
       "hero.title.line2": "AI coding agent in your terminal",
       "hero.sub":
@@ -143,7 +143,7 @@
       "nav.benchmarks": "性能对比",
       "nav.github": "GitHub",
 
-      "hero.badge": "v0.6 · DeepSeek V4 · 缓存优先",
+      "hero.badge": "v{version} · DeepSeek V4 · 缓存优先",
       "hero.title.line1": "DeepSeek 原生",
       "hero.title.line2": "终端里的 AI 编程代理",
       "hero.sub":
@@ -304,6 +304,49 @@
   let currentLang = DEFAULT_LANG;
   const langListeners = [];
 
+  // Version is rendered into translation strings via a `{version}` token
+  // (see hero.badge). Source of truth is npm — `loadVersion()` fetches
+  // it on page load and re-applies translations. Until that resolves
+  // we fall back to the most recently cached value, then to a baked-in
+  // default. Only places this constant matters: the user is offline AND
+  // visits the site for the first time. Bumping it occasionally on
+  // major version cuts is fine; the npm fetch handles everything else.
+  const VERSION_STORAGE_KEY = "reasonix.version";
+  const VERSION_FALLBACK = "0.12";
+  const versionListeners = [];
+  let currentVersion = VERSION_FALLBACK;
+
+  function applyVersion(v) {
+    if (typeof v !== "string" || !v || v === currentVersion) return;
+    currentVersion = v;
+    safeStorageSet(VERSION_STORAGE_KEY, v);
+    applyLang(currentLang); // re-render any `{version}` tokens
+    for (const fn of versionListeners) {
+      try {
+        fn(v);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  }
+
+  async function loadVersion() {
+    try {
+      const r = await fetch("https://registry.npmjs.org/reasonix/latest", {
+        cache: "no-cache",
+      });
+      if (!r.ok) return;
+      const data = await r.json();
+      if (data && typeof data.version === "string") applyVersion(data.version);
+    } catch (_) {
+      /* offline / firewall — keep cached or fallback */
+    }
+  }
+
+  function fillVersion(s) {
+    return typeof s === "string" ? s.replace(/\{version\}/g, currentVersion) : s;
+  }
+
   function applyLang(lang) {
     if (!SUPPORTED.includes(lang)) lang = DEFAULT_LANG;
     const changed = lang !== currentLang;
@@ -316,7 +359,7 @@
     document.querySelectorAll("[data-i18n]").forEach((el) => {
       const key = el.getAttribute("data-i18n");
       if (dict[key] !== undefined) {
-        el.innerHTML = dict[key];
+        el.innerHTML = fillVersion(dict[key]);
       }
     });
 
@@ -349,6 +392,12 @@
   };
   window.Reasonix.onLangChange = function (fn) {
     if (typeof fn === "function") langListeners.push(fn);
+  };
+  window.Reasonix.version = function () {
+    return currentVersion;
+  };
+  window.Reasonix.onVersionChange = function (fn) {
+    if (typeof fn === "function") versionListeners.push(fn);
   };
 
   function wireLangButtons() {
@@ -393,9 +442,16 @@
   }
 
   function init() {
+    // Use the cached npm version (if any) so the badge isn't visibly
+    // wrong on first paint; fall back to the baked-in default. Then
+    // fire off the live fetch — when it resolves, applyVersion()
+    // re-applies translations and notifies subscribers (term-anim).
+    const cached = safeStorageGet(VERSION_STORAGE_KEY);
+    if (typeof cached === "string" && /^\d+\.\d+/.test(cached)) currentVersion = cached;
     applyLang(detectLang());
     wireLangButtons();
     wireCopyButtons();
+    loadVersion();
   }
 
   if (document.readyState === "loading") {

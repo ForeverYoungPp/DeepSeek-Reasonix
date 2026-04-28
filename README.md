@@ -72,6 +72,28 @@ command list.
 
 ---
 
+## Web dashboard *(new in 0.12)*
+
+Type `/dashboard` inside any session and Reasonix prints a localhost
+URL with a one-time token. Open it for a 13-tab control surface that
+mirrors the running TUI — chat (with live streaming), the editor (file
+tree + CodeMirror, syntax highlighting + autocomplete + side-by-side
+diff for pending edits), Usage / Sessions / Plans / Tools /
+Permissions / System / MCP / Skills / Memory / Hooks / Settings.
+
+```
+reasonix code › /dashboard
+▸ http://127.0.0.1:54219/?token=… (open in browser)
+```
+
+127.0.0.1 only, ephemeral token expires when the session ends, every
+mutation is CSRF-checked. The TUI keeps working — modals (shell
+confirms, plan reviews, edit gates) mirror to whichever surface you
+look at first. No build step, no Electron, no separate process to
+keep alive.
+
+---
+
 ## Why Reasonix? (vs Cursor / Claude Code / Cline / Aider)
 
 Three things you'd come to Reasonix for, that nothing else combines:
@@ -316,8 +338,9 @@ reasonix code › /commit "fix: findByEmail case-insensitive"
   session file.
 - `/effort high` — step down from the default `max` agent-class
   reasoning_effort for cheaper/faster turns on simple tasks.
-- `npx reasonix code --preset max` — v4-pro + 3-way self-consistency
-  branching for gnarly refactors.
+- `npx reasonix code --preset pro` — v4-pro for the whole session,
+  no auto-downgrade to flash. Pair with `--branch 3` if you want
+  3-way self-consistency on gnarly refactors.
 - `npx reasonix code src/` — narrower sandbox (only `src/` is
   writable).
 - `npx reasonix code --no-session` — ephemeral; nothing saved.
@@ -348,8 +371,8 @@ in the file. No prompts, no completions, no tool arguments.
 ### Staying current
 
 The panel header shows the running version next to `Reasonix` (e.g.
-`Reasonix v0.5.21 · deepseek-v4-pro · harvest · max …`, the trailing
-`max` is the reasoning-effort badge — `/effort high` to step down).
+`Reasonix 0.12.6 · v4-flash · AUTO · max …`, the trailing `max` is
+the reasoning-effort badge — `/effort high` to step down).
 A quiet 24-hour background check against
 the npm registry surfaces a yellow `update: X.Y.Z` on the right side
 of the same row when a newer version has been published. No blocking,
@@ -535,7 +558,7 @@ your own MCP servers. Sessions persist per name under
 
 ```bash
 npx reasonix                             # uses saved config + wizard-selected MCP
-npx reasonix --preset smart              # reasoner + R1 harvest for this run
+npx reasonix --preset pro                # pin v4-pro for the whole run (no auto-downgrade)
 npx reasonix --session design            # named session — resume later with --session design
 ```
 
@@ -570,7 +593,7 @@ rendering, retries.
 
 | command | what it does |
 |---|---|
-| `/preset <fast\|smart\|max>` | one-tap bundle (model + harvest + branch) |
+| `/preset <auto\|flash\|pro>` | model commitment — `auto` = flash with escalation, `flash` = locked flash, `pro` = locked pro |
 | `/model <id>` | switch DeepSeek model (`deepseek-v4-flash`, `deepseek-v4-pro`, plus `deepseek-chat` / `deepseek-reasoner` compat aliases) |
 | `/models` | list live models from DeepSeek `/models` endpoint |
 | `/harvest [on\|off]` | toggle R1 plan-state extraction |
@@ -750,7 +773,7 @@ npx reasonix sessions                    # list saved sessions
 Common flags:
 
 ```bash
---preset <fast|smart|max>   # bundle (model + harvest + branch)
+--preset <auto|flash|pro>   # model commitment (auto / locked-flash / locked-pro)
 --model <id>                # explicit model id
 --harvest / --no-harvest    # R1 plan-state extraction
 --branch <N>                # self-consistency budget
