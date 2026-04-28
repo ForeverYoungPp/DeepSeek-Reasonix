@@ -3,6 +3,30 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.13] — 2026-04-28
+
+**Fix:** the chat feed kept yanking the user back to the bottom
+during streaming — wheel-up didn't stick. Two bugs stacked:
+
+1. The scroll listener attached to `document.querySelector(".chat-feed")`
+   on first mount, but the `.chat-feed` div was conditionally
+   rendered (only when at least one message existed). On a fresh
+   session the listener never attached, so the "is the user
+   scrolled away?" flag was never flipped to `false`.
+2. Even after the listener attached, the auto-scroll effect's
+   own `el.scrollTop = el.scrollHeight` write fires a `scroll`
+   event that re-snaps the flag back to `true`. Manual wheel
+   scrolls were racing the next streaming delta's auto-snap.
+
+Both fixed:
+
+- `.chat-feed` is now always rendered (the empty-state copy
+  moved inside it). A `feedRef` ref attaches the scroll
+  listener on first paint.
+- A new `autoScrollInFlight` ref gates the listener: events
+  observed during a programmatic scroll write are ignored, so
+  only genuine user wheel/drag flips the auto-scroll guard.
+
 ## [0.12.12] — 2026-04-28
 
 **Headline:** Indexing from the dashboard now actually wires up

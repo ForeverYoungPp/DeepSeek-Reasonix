@@ -1206,6 +1206,12 @@ function ChatPanel() {
   // longer yank the view back. Re-armed when they scroll back to the
   // bottom on their own. 80px threshold absorbs sub-pixel rounding.
   const shouldAutoScroll = useRef(true);
+  // Ref to the scrollable feed container so we don't have to rely on
+  // a global querySelector (which would race the conditional render
+  // — `.chat-feed` only mounts when at least one message is present).
+  // The feed is now always rendered, so `feedRef.current` is set on
+  // first paint and the scroll listener attaches once.
+  const feedRef = useRef(null);
 
   // Initial snapshot — messages + busy + any modal already up.
   useEffect(() => {
@@ -1416,10 +1422,22 @@ function ChatPanel() {
   // immediately. The threshold is generous enough that overshoot
   // (smooth-scroll rebound, sub-pixel rounding) doesn't accidentally
   // re-arm tracking when the user is barely above bottom.
+  //
+  // We also distinguish *user* scroll events from auto-scroll's own
+  // programmatic `scrollTop = scrollHeight` writes. Without that gate
+  // the auto-scroll effect would briefly snap to bottom, fire its
+  // own scroll event, re-set shouldAutoScroll = true, then wonder
+  // why the user complained that they couldn't scroll up — because
+  // every wheel-up was racing against the next delta's auto-snap.
+  // We mark the ref as `auto-scrolling` for one tick around the
+  // programmatic write; the listener ignores events it sees during
+  // that window.
+  const autoScrollInFlight = useRef(false);
   useEffect(() => {
-    const el = document.querySelector(".chat-feed");
+    const el = feedRef.current;
     if (!el) return;
     const onScroll = () => {
+      if (autoScrollInFlight.current) return;
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       shouldAutoScroll.current = distFromBottom < 80;
     };
@@ -1431,8 +1449,16 @@ function ChatPanel() {
   // deltas no longer yank the view back; manual wheel/drag wins.
   useEffect(() => {
     if (!shouldAutoScroll.current) return;
-    const el = document.querySelector(".chat-feed");
-    if (el) el.scrollTop = el.scrollHeight;
+    const el = feedRef.current;
+    if (!el) return;
+    autoScrollInFlight.current = true;
+    el.scrollTop = el.scrollHeight;
+    // Clear the gate after the browser has had a chance to fire the
+    // resulting scroll event (microtask-ish — rAF is overkill, a 0ms
+    // setTimeout is enough to land after the synchronous handler).
+    setTimeout(() => {
+      autoScrollInFlight.current = false;
+    }, 0);
   }, [messages, streaming]);
 
   const allMessages = streaming
@@ -1654,23 +1680,23 @@ function ChatPanel() {
           : null
       }
 
-      ${
-        allMessages.length === 0
-          ? html`<div class="chat-empty">No conversation yet. Send a prompt below to begin.</div>`
-          : html`
-          <div class="chat-feed">
-            ${allMessages.map(
-              (m) => html`
-              <${ChatMessage}
-                key=${m.id}
-                msg=${m}
-                streaming=${streaming && streaming.id === m.id}
-              />
-            `,
-            )}
-          </div>
-        `
-      }
+      <div class="chat-feed" ref=${feedRef}>
+        ${
+          allMessages.length === 0
+            ? html`<div class="chat-empty">
+                No conversation yet. Send a prompt below to begin.
+              </div>`
+            : allMessages.map(
+                (m) => html`
+                  <${ChatMessage}
+                    key=${m.id}
+                    msg=${m}
+                    streaming=${streaming && streaming.id === m.id}
+                  />
+                `,
+              )
+        }
+      </div>
 
       <div class="chat-input-area">
         <textarea
