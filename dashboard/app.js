@@ -5,7 +5,7 @@
 
 import hljs from "https://esm.sh/highlight.js@11.10.0/lib/common";
 import htm from "https://esm.sh/htm@3.1.1";
-import { marked } from "https://esm.sh/marked@12.0.2";
+import { Marked, marked } from "https://esm.sh/marked@12.0.2";
 import { Component, h, render } from "https://esm.sh/preact@10.22.0";
 import {
   useCallback,
@@ -132,6 +132,34 @@ renderer.code = function reasonixCode(arg1, arg2 /* legacy lang */) {
 };
 
 marked.use({ renderer, gfm: true, breaks: false, pedantic: false });
+
+// Separate Marked instance for the editor's markdown preview. The chat
+// renderer above does fancy SEARCH/REPLACE diff blocks and stamps every
+// code fence through hljs — useful inside an assistant message, but
+// disruptive when the user is just previewing a normal README and
+// expects standard `<pre><code>` blocks. Vanilla rendering also avoids
+// any chance our custom token-shape sniffing breaks on real markdown.
+const previewMarked = new Marked({ gfm: true, breaks: false, pedantic: false });
+previewMarked.use({
+  renderer: {
+    code(...args) {
+      const first = args[0];
+      const arg = first && typeof first === "object" ? first : { text: first, lang: args[1] };
+      const text = arg.text == null ? "" : String(arg.text);
+      const lang = typeof arg.lang === "string" ? arg.lang : "";
+      try {
+        const out =
+          lang && hljs.getLanguage(lang)
+            ? hljs.highlight(text, { language: lang, ignoreIllegals: true })
+            : hljs.highlightAuto(text);
+        const cls = lang ? `hljs language-${lang}` : "hljs";
+        return `<pre><code class="${cls}">${out.value}</code></pre>`;
+      } catch {
+        return `<pre><code>${escapeHtml(text)}</code></pre>`;
+      }
+    },
+  },
+});
 
 // ---------- bootstrapping ----------
 
@@ -2760,12 +2788,19 @@ function McpPanel() {
 // breaks `instanceof Extension` and crashes EditorState.create with
 // "Unrecognized extension value". Pinning core deps here forces every
 // pack to resolve against the same set of instances.
+//
+// @lezer/highlight + @lezer/common MUST be pinned too: highlight tags
+// (`tags.keyword`, etc.) are JS objects compared by identity. If two
+// packages load different @lezer/highlight, oneDark's HighlightStyle
+// stops recognizing tags coming out of the language parser → editor
+// renders, but no token colors. That's the silent "no highlighting"
+// failure mode. Same for @lezer/common (parser nodes).
 let cmModulesPromise = null;
 async function loadCodeMirror() {
   if (cmModulesPromise) return cmModulesPromise;
   cmModulesPromise = (async () => {
     const DEPS =
-      "?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.0,@codemirror/language@6.10.1,@codemirror/commands@6.5.0";
+      "?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.0,@codemirror/language@6.10.1,@codemirror/commands@6.5.0,@lezer/common@1.2.1,@lezer/highlight@1.2.0";
     const [
       { EditorState, Compartment },
       {
@@ -2935,6 +2970,7 @@ function EditorPanel({ onClose } = {}) {
   const [cmReady, setCmReady] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
+  const [preview, setPreview] = useState(false);
   const editorContainerRef = useRef(null);
   const viewRef = useRef(null);
   const cmRef = useRef(null);
@@ -3092,7 +3128,7 @@ function EditorPanel({ onClose } = {}) {
         viewRef.current = null;
       }
     };
-  }, [cmReady, activeIdx, tabs[activeIdx]?.path]);
+  }, [cmReady, activeIdx, tabs[activeIdx]?.path, preview]);
 
   const closeTab = useCallback((idx) => {
     const tab = tabsRef.current[idx];
@@ -3299,15 +3335,36 @@ function EditorPanel({ onClose } = {}) {
             <div class="editor-bar">
               <code style="font-size: 12px;">${tab.path}</code>
               <span class="muted" style="font-size: 12px;">${langFromPath(tab.path) ?? "plaintext"}</span>
+              ${
+                langFromPath(tab.path) === "markdown"
+                  ? html`
+                  <button
+                    class=${preview ? "primary" : ""}
+                    style="margin-left: auto;"
+                    onClick=${() => setPreview((p) => !p)}
+                    title="toggle markdown preview"
+                  >${preview ? "Edit" : "Preview"}</button>
+                `
+                  : null
+              }
               <button
                 class="primary"
-                style="margin-left: auto;"
+                style=${langFromPath(tab.path) === "markdown" ? "" : "margin-left: auto;"}
                 onClick=${() => saveTab(activeIdx)}
                 disabled=${busy || !tab.dirty}
               >${tab.dirty ? "Save (⌘S)" : "Saved"}</button>
             </div>
             ${error ? html`<div class="notice err">${error}</div>` : null}
-            <div ref=${editorContainerRef} class="editor-host"></div>
+            ${
+              preview && langFromPath(tab.path) === "markdown"
+                ? html`
+                <div
+                  class="editor-host editor-md-preview md"
+                  dangerouslySetInnerHTML=${{ __html: previewMarked.parse(tab.content ?? "") }}
+                ></div>
+              `
+                : html`<div ref=${editorContainerRef} class="editor-host"></div>`
+            }
           `
             : html`
             <div class="editor-empty">

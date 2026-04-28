@@ -1940,6 +1940,100 @@ textarea:focus {
   background: #282c34;
 }
 
+/* Markdown preview — render the same .md styles used in chat,
+ * but with scroll and a comfortable max-width so prose doesn't
+ * stretch across the full editor width. */
+.editor-md-preview {
+  overflow-y: auto;
+  padding: 24px 36px;
+  background: #282c34;
+  color: #abb2bf;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.65;
+}
+.editor-md-preview > *:first-child {
+  margin-top: 0;
+}
+.editor-md-preview h1,
+.editor-md-preview h2,
+.editor-md-preview h3,
+.editor-md-preview h4 {
+  color: #e5e9f0;
+  margin: 1.4em 0 0.6em;
+  line-height: 1.3;
+}
+.editor-md-preview h1 {
+  font-size: 1.8em;
+  border-bottom: 1px solid #3e4451;
+  padding-bottom: 0.3em;
+}
+.editor-md-preview h2 {
+  font-size: 1.4em;
+  border-bottom: 1px solid #3e4451;
+  padding-bottom: 0.3em;
+}
+.editor-md-preview h3 {
+  font-size: 1.15em;
+}
+.editor-md-preview a {
+  color: #61afef;
+  text-decoration: none;
+}
+.editor-md-preview a:hover {
+  text-decoration: underline;
+}
+.editor-md-preview code {
+  background: #21252b;
+  color: #e06c75;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+.editor-md-preview pre {
+  background: #21252b;
+  border: 1px solid #181a1f;
+  border-radius: 4px;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+.editor-md-preview pre code {
+  background: transparent;
+  color: #abb2bf;
+  padding: 0;
+}
+.editor-md-preview blockquote {
+  border-left: 3px solid #5c6370;
+  margin: 0.8em 0;
+  padding: 0.2em 0.9em;
+  color: #828997;
+}
+.editor-md-preview table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+}
+.editor-md-preview th,
+.editor-md-preview td {
+  border: 1px solid #3e4451;
+  padding: 5px 10px;
+}
+.editor-md-preview th {
+  background: #21252b;
+}
+.editor-md-preview hr {
+  border: none;
+  border-top: 1px solid #3e4451;
+  margin: 1.5em 0;
+}
+.editor-md-preview ul,
+.editor-md-preview ol {
+  padding-left: 1.6em;
+}
+.editor-md-preview img {
+  max-width: 100%;
+}
+
 @media (max-width: 800px) {
   .editor-shell {
     height: calc(100vh - 100px);

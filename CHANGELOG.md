@@ -3,6 +3,31 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.4] — 2026-04-28
+
+**Headline:** The two real editor problems that 0.12.2/3 didn't
+actually fix: highlighting was still missing for every language,
+and the new markdown preview produced a half-rendered page where
+the bottom got dumped into a `<pre>`.
+
+### Editor
+
+- **Pin `@lezer/highlight` + `@lezer/common` in the esm.sh
+  `?deps=` list.** The silent-no-highlights failure was caused by
+  duplicated `@lezer/highlight` instances across CodeMirror
+  packages: `tags.keyword` etc. are JS objects compared by
+  identity, so when the language pack and the theme each loaded
+  their own copy, the parser produced tags the theme didn't
+  recognize, and all coloring quietly went away. Pinning common
+  + highlight forces every package to share one set.
+- **Separate `Marked` instance for the markdown preview
+  (`previewMarked`).** The chat renderer is loaded with custom
+  `code` handling for SEARCH/REPLACE diffs and edit:foo/path
+  fence syntax — that ran on every preview too, occasionally
+  swallowing the rest of the document into one `<pre>` block on
+  certain inputs. Preview now uses a vanilla marked + a slim
+  hljs-only `code` override.
+
 ## [0.12.3] — 2026-04-28
 
 **Headline:** Editor as a first-class sidebar tab. The drawer was
