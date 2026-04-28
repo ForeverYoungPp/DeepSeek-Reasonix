@@ -3,6 +3,41 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.11] — 2026-04-28
+
+**Headline:** Tell users what to do when Ollama isn't installed
+yet. The 0.12.9 Semantic panel just said "not reachable" with a
+generic copy-this-command blurb — the new flow distinguishes
+"binary missing" from "daemon down" from "model not pulled" and
+offers a one-click action for each level it can resolve.
+
+### Server
+
+- `GET /api/semantic` now returns the full `checkOllamaStatus`
+  payload — `binaryFound`, `daemonRunning`, `modelPulled`,
+  `modelName`, `installedModels` — instead of the raw probe.
+- New endpoints:
+  - `POST /api/semantic/ollama/start` — runs `startOllamaDaemon`
+    (15s timeout). Returns `{ ready, pid }`.
+  - `POST /api/semantic/ollama/pull` — fire-and-forget
+    `pullOllamaModel`. Per-model `PULLS` map tracks status +
+    last log line; `/api/semantic` includes it as `pull`.
+
+### Dashboard — Semantic panel
+
+Tri-state Ollama section:
+- **No binary** → red "not installed" pill + Install Ollama
+  card with macOS / Windows / Linux install instructions. We
+  deliberately don't run package managers for the user.
+- **Binary, daemon down** → yellow "daemon down" pill + "Start
+  daemon" button (calls `ollama/start`).
+- **Daemon up, model missing** → "not pulled" pill + "Pull
+  <model>" button. Live status row during the pull (latest
+  ollama output line, elapsed seconds, success/error pill).
+- **Everything ready** → green pill, Index buttons enable.
+
+Polling speeds up to 1.2s while a pull or build job is running.
+
 ## [0.12.10] — 2026-04-28
 
 **Headline:** Move the in-flight indicator out of the top-left

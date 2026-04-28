@@ -23,9 +23,15 @@
 
 import { buildIndex, indexExists } from "../../index/semantic/builder.js";
 import type { BuildProgress, BuildResult } from "../../index/semantic/builder.js";
-import { probeOllama } from "../../index/semantic/embedding.js";
+import {
+  checkOllamaStatus,
+  pullOllamaModel,
+  startOllamaDaemon,
+} from "../../index/semantic/ollama-launcher.js";
 import type { DashboardContext } from "../context.js";
 import type { ApiResult } from "../router.js";
+
+const DEFAULT_EMBED_MODEL = process.env.REASONIX_EMBED_MODEL ?? "nomic-embed-text";
 
 interface JobRecord {
   startedAt: number;
@@ -47,6 +53,20 @@ interface JobRecord {
 }
 
 const JOBS = new Map<string, JobRecord>();
+
+/**
+ * Per-process pull-job state. `ollama pull <model>` is long-running
+ * (multi-minute download on first install), so the SPA needs a way
+ * to poll progress without holding open a request. Keyed by model
+ * name because two dashboards might pull different models concurrently.
+ */
+interface PullRecord {
+  startedAt: number;
+  status: "pulling" | "done" | "error";
+  lastLine: string;
+  exitCode: number | null;
+}
+const PULLS = new Map<string, PullRecord>();
 
 function getRoot(ctx: DashboardContext): string | null {
   const cwd = ctx.getCurrentCwd?.();
@@ -70,6 +90,11 @@ export async function handleSemantic(
   if (sub === "stop" && method === "POST") {
     return await stopJob(ctx);
   }
+  if (sub === "ollama" && method === "POST") {
+    const action = rest[1] ?? "";
+    if (action === "start") return await startDaemon();
+    if (action === "pull") return await startPull(body);
+  }
   return { status: 404, body: { error: "no such semantic endpoint" } };
 }
 
@@ -85,11 +110,20 @@ async function getStatus(ctx: DashboardContext): Promise<ApiResult> {
       },
     };
   }
+  const model = DEFAULT_EMBED_MODEL;
   const [hasIndex, ollama] = await Promise.all([
     indexExists(root),
-    probeOllama({}).catch(() => ({ ok: false, error: "probe failed" })),
+    checkOllamaStatus(model).catch((err) => ({
+      binaryFound: false,
+      daemonRunning: false,
+      modelPulled: false,
+      modelName: model,
+      installedModels: [] as string[],
+      error: err instanceof Error ? err.message : String(err),
+    })),
   ]);
   const job = JOBS.get(root) ?? null;
+  const pull = PULLS.get(model) ?? null;
   return {
     status: 200,
     body: {
@@ -98,8 +132,81 @@ async function getStatus(ctx: DashboardContext): Promise<ApiResult> {
       index: { exists: hasIndex },
       ollama,
       job: job ? snapshotJob(job) : null,
+      pull: pull ? snapshotPull(pull) : null,
     },
   };
+}
+
+function snapshotPull(p: PullRecord): unknown {
+  return {
+    startedAt: p.startedAt,
+    status: p.status,
+    lastLine: p.lastLine,
+    exitCode: p.exitCode,
+  };
+}
+
+async function startDaemon(): Promise<ApiResult> {
+  const r = await startOllamaDaemon({ timeoutMs: 15_000 }).catch((err: Error) => ({
+    ready: false,
+    pid: null,
+    error: err.message,
+  }));
+  if ("error" in r) {
+    return { status: 500, body: { ready: false, error: r.error } };
+  }
+  return { status: r.ready ? 200 : 504, body: r };
+}
+
+interface PullBody {
+  model?: unknown;
+}
+
+async function startPull(body: string): Promise<ApiResult> {
+  let parsed: PullBody = {};
+  if (body) {
+    try {
+      parsed = JSON.parse(body) as PullBody;
+    } catch {
+      return { status: 400, body: { error: "invalid JSON body" } };
+    }
+  }
+  const model =
+    typeof parsed.model === "string" && parsed.model ? parsed.model : DEFAULT_EMBED_MODEL;
+  const existing = PULLS.get(model);
+  if (existing && existing.status === "pulling") {
+    return {
+      status: 409,
+      body: { error: `${model} is already pulling`, pull: snapshotPull(existing) },
+    };
+  }
+  const rec: PullRecord = {
+    startedAt: Date.now(),
+    status: "pulling",
+    lastLine: `pulling ${model}…`,
+    exitCode: null,
+  };
+  PULLS.set(model, rec);
+  // Fire-and-forget. Polling /api/semantic surfaces progress.
+  void pullOllamaModel(model, {
+    onLine: (line) => {
+      // Ollama prints animated progress lines (`pulling abc... 12%`);
+      // keeping the latest is enough for a status panel readout.
+      if (line.trim().length > 0) rec.lastLine = line.trim();
+    },
+  })
+    .then((code) => {
+      rec.exitCode = code;
+      rec.status = code === 0 ? "done" : "error";
+      if (code !== 0 && (!rec.lastLine || !rec.lastLine.toLowerCase().includes("error"))) {
+        rec.lastLine = `ollama pull exited with code ${code}`;
+      }
+    })
+    .catch((err: Error) => {
+      rec.status = "error";
+      rec.lastLine = err.message;
+    });
+  return { status: 202, body: { started: true, pull: snapshotPull(rec) } };
 }
 
 function snapshotJob(j: JobRecord): unknown {

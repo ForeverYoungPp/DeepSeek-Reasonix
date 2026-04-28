@@ -2810,19 +2810,19 @@ function SemanticPanel() {
     }
   }, []);
 
-  // Poll fast while a job is running, slow when idle. The fast cadence
-  // keeps the progress bar feeling live (chunks/sec is usually high
-  // enough that 1s polls show clear motion); the idle cadence keeps
-  // the panel responsive to a freshly-started Ollama daemon without
-  // burning network on the loop.
+  // Poll fast while a job is running OR while ollama is pulling a
+  // model (the latest-line readout updates every few hundred ms during
+  // a download). Slow when idle so the panel doesn't burn network just
+  // sitting open in a tab.
   useEffect(() => {
     load();
     const phase = data?.job?.phase;
     const running = phase === "scan" || phase === "embed" || phase === "write";
-    const ms = running ? 1200 : 5000;
+    const pulling = data?.pull?.status === "pulling";
+    const ms = running || pulling ? 1200 : 5000;
     const id = setInterval(load, ms);
     return () => clearInterval(id);
-  }, [load, data?.job?.phase]);
+  }, [load, data?.job?.phase, data?.pull?.status]);
 
   const start = useCallback(
     async (rebuild) => {
@@ -2856,6 +2856,40 @@ function SemanticPanel() {
     }
   }, [load]);
 
+  const startDaemon = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    setInfo("starting ollama daemon (15s timeout)…");
+    try {
+      const r = await api("/semantic/ollama/start", { method: "POST", body: {} });
+      setInfo(
+        r.ready ? "daemon is up" : "daemon didn't come up in time — check `ollama serve` manually",
+      );
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [load]);
+
+  const pullModel = useCallback(
+    async (model) => {
+      setBusy(true);
+      setError(null);
+      setInfo(`pulling ${model} — this may take a few minutes on first install`);
+      try {
+        await api("/semantic/ollama/pull", { method: "POST", body: { model } });
+        await load();
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load],
+  );
+
   if (!data && !error) return html`<div class="boot">loading semantic status…</div>`;
   if (error && !data) return html`<div class="notice err">${error}</div>`;
 
@@ -2874,8 +2908,22 @@ function SemanticPanel() {
   const job = data.job;
   const phase = job?.phase;
   const running = phase === "scan" || phase === "embed" || phase === "write";
-  const ollamaOk = data.ollama?.ok === true;
-  const ollamaModels = ollamaOk ? (data.ollama.models ?? []) : [];
+  const pull = data.pull;
+  const pulling = pull?.status === "pulling";
+
+  // Tri-state Ollama check. Each level gates the next:
+  //   binary missing → user must install (we won't run a package
+  //                    manager on their behalf).
+  //   daemon down    → one-click start (`ollama serve`).
+  //   model missing  → one-click pull.
+  //   all good       → ready to index.
+  const o = data.ollama ?? {};
+  const binaryFound = o.binaryFound === true;
+  const daemonRunning = o.daemonRunning === true;
+  const modelPulled = o.modelPulled === true;
+  const modelName = o.modelName ?? "nomic-embed-text";
+  const installedModels = o.installedModels ?? [];
+  const ready = binaryFound && daemonRunning && modelPulled;
 
   return html`
     <div>
@@ -2892,36 +2940,114 @@ function SemanticPanel() {
         <div>
           <span class="kv-key">ollama</span>
           ${
-            ollamaOk
-              ? html`<span class="muted">reachable · ${ollamaModels.length} model(s)${
-                  ollamaModels.length > 0
-                    ? ` · ${ollamaModels.slice(0, 3).join(", ")}${ollamaModels.length > 3 ? "…" : ""}`
-                    : ""
-                }</span>`
-              : html`<span class="err">not reachable — ${data.ollama?.error ?? "unknown"}</span>`
+            binaryFound
+              ? daemonRunning
+                ? html`<span class="pill pill-ok">reachable</span><span class="muted" style="margin-left: 8px;">${installedModels.length} model(s)${
+                    installedModels.length > 0
+                      ? ` · ${installedModels.slice(0, 3).join(", ")}${installedModels.length > 3 ? "…" : ""}`
+                      : ""
+                  }</span>`
+                : html`<span class="pill pill-warn">daemon down</span><span class="muted" style="margin-left: 8px;">binary on PATH but not serving</span>`
+              : html`<span class="pill pill-err">not installed</span><span class="muted" style="margin-left: 8px;">${o.error ?? "ollama binary not on PATH"}</span>`
+          }
+        </div>
+        <div>
+          <span class="kv-key">model</span>
+          <code>${modelName}</code>
+          ${
+            modelPulled
+              ? html`<span class="pill pill-ok" style="margin-left: 8px;">pulled</span>`
+              : daemonRunning
+                ? html`<span class="pill pill-warn" style="margin-left: 8px;">not pulled</span>`
+                : html`<span class="pill pill-dim" style="margin-left: 8px;">unknown (daemon down)</span>`
           }
         </div>
         <div>
           <span class="kv-key">index</span>
-          ${data.index.exists ? html`<span class="muted">present at <code>.reasonix/semantic/</code></span>` : html`<span class="muted">none — run an index to enable <code>semantic_search</code></span>`}
+          ${
+            data.index.exists
+              ? html`<span class="muted">present at <code>.reasonix/semantic/</code></span>`
+              : html`<span class="muted">none — run an index to enable <code>semantic_search</code></span>`
+          }
         </div>
       </div>
+
+      ${
+        !binaryFound
+          ? html`
+            <div class="section-title">Install Ollama</div>
+            <div class="card" style="font-size: 13px;">
+              Reasonix doesn't run package managers for you. Install Ollama
+              first, then come back to this panel:
+              <ul style="margin: 10px 0 4px 18px; padding: 0;">
+                <li><strong>macOS / Windows:</strong> download from <a href="https://ollama.com/download" target="_blank" rel="noreferrer">ollama.com/download</a></li>
+                <li><strong>Linux:</strong> <code>curl -fsSL https://ollama.com/install.sh | sh</code></li>
+              </ul>
+              <div class="muted" style="margin-top: 8px;">After install, this panel will offer to start the daemon and pull <code>${modelName}</code> for you. Refresh after installing.</div>
+            </div>
+          `
+          : null
+      }
+
+      ${
+        binaryFound && !daemonRunning
+          ? html`
+            <div class="section-title">Daemon</div>
+            <div class="card" style="font-size: 13px;">
+              <code>ollama</code> is on your PATH but the HTTP daemon isn't reachable.
+              <div class="row" style="margin-top: 10px;">
+                <button class="primary" disabled=${busy} onClick=${startDaemon}>Start daemon</button>
+                <span class="muted" style="font-size: 12px; align-self: center;">runs <code>ollama serve</code> detached — survives Reasonix exit</span>
+              </div>
+            </div>
+          `
+          : null
+      }
+
+      ${
+        daemonRunning && !modelPulled
+          ? html`
+            <div class="section-title">Model</div>
+            <div class="card" style="font-size: 13px;">
+              <code>${modelName}</code> isn't installed yet. ${pulling ? "" : `~270 MB download on first pull.`}
+              <div class="row" style="margin-top: 10px;">
+                <button
+                  class="primary"
+                  disabled=${busy || pulling}
+                  onClick=${() => pullModel(modelName)}
+                >${pulling ? "pulling…" : `Pull ${modelName}`}</button>
+              </div>
+              ${
+                pull
+                  ? html`
+                    <div class="kv" style="margin-top: 10px;">
+                      <div>
+                        <span class="kv-key">status</span>
+                        <span class=${`pill ${pull.status === "done" ? "pill-ok" : pull.status === "error" ? "pill-err" : "pill-active"}`}>${pull.status}</span>
+                        <span class="muted" style="margin-left: 8px;">${((Date.now() - pull.startedAt) / 1000).toFixed(1)}s</span>
+                      </div>
+                      ${
+                        pull.lastLine
+                          ? html`<div><span class="kv-key">last</span><code style="font-size: 11.5px;">${pull.lastLine}</code></div>`
+                          : null
+                      }
+                    </div>
+                  `
+                  : null
+              }
+            </div>
+          `
+          : null
+      }
 
       <div class="section-title">Job</div>
       ${job ? html`<${SemanticJobView} job=${job} running=${running} />` : html`<div class="muted">No job has run in this dashboard yet.</div>`}
 
       <div class="row" style="margin-top: 14px;">
-        <button class="primary" disabled=${busy || running || !ollamaOk} onClick=${() => start(false)}>Index (incremental)</button>
-        <button disabled=${busy || running || !ollamaOk} onClick=${() => start(true)}>Rebuild (wipe + full)</button>
+        <button class="primary" disabled=${busy || running || !ready} onClick=${() => start(false)}>Index (incremental)</button>
+        <button disabled=${busy || running || !ready} onClick=${() => start(true)}>Rebuild (wipe + full)</button>
         <button disabled=${busy || !running} onClick=${stop}>Stop</button>
       </div>
-      ${
-        !ollamaOk
-          ? html`<div class="muted" style="margin-top: 10px; font-size: 12px;">
-            Install Ollama from <a href="https://ollama.com" target="_blank" rel="noreferrer">ollama.com</a>, run <code>ollama serve</code>, then <code>ollama pull nomic-embed-text</code>. Refresh this panel — buttons enable once the daemon answers.
-          </div>`
-          : null
-      }
     </div>
   `;
 }
