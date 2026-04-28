@@ -3349,6 +3349,14 @@ const TABS = [
     badge: null,
   },
   {
+    id: "editor",
+    name: "Editor",
+    glyph: "✎",
+    panel: () => html`<${EditorPanel} />`,
+    ready: true,
+    badge: null,
+  },
+  {
     id: "overview",
     name: "Overview",
     glyph: "◈",
@@ -3761,7 +3769,7 @@ function App() {
     </div>
     <div class="sidebar-backdrop" onClick=${() => setSidebarOpen(false)}></div>
     <button class="menu-toggle" onClick=${() => setSidebarOpen((s) => !s)} aria-label="Toggle sidebar">≡</button>
-    <div class="main">
+    <div class=${`main ${active.id === "editor" ? "main-editor" : ""}`}>
       <${ErrorBoundary}>${active.panel()}<//>
     </div>
     <div class=${`editor-drawer-host ${editorOpen ? "open" : ""}`}>

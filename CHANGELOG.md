@@ -3,6 +3,26 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] — 2026-04-28
+
+**Headline:** Editor as a first-class sidebar tab. The drawer was
+the only way in, which meant you had to start a chat and click a
+file path before you could browse anything. Now there's a sidebar
+entry that opens the file tree directly.
+
+### Editor
+
+- New **Editor** tab in the sidebar (after Chat). Mounts the
+  `EditorPanel` full-width inside `.main` — same file tree,
+  tabs, CodeMirror — no drawer chrome.
+- `.main` gets a `main-editor` modifier when the editor tab is
+  active, dropping the 28×36 panel padding and letting the
+  editor fill the viewport.
+- The chat drawer entry point still works (clicking a path in a
+  tool card slides the drawer in over the current tab). Drawer
+  and sidebar Editor are separate instances; their tab state
+  doesn't share yet — revisit if it becomes annoying.
+
 ## [0.12.2] — 2026-04-28
 
 **Headline:** Editor polish pass. Tabs at the top span the full
