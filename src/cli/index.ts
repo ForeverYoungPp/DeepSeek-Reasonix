@@ -7,6 +7,7 @@ import { applyMemoryStack } from "../user-memory.js";
 import { chatCommand } from "./commands/chat.js";
 import { codeCommand } from "./commands/code.js";
 import { diffCommand } from "./commands/diff.js";
+import { doctorCommand } from "./commands/doctor.js";
 import { indexCommand } from "./commands/index.js";
 import { mcpInspectCommand } from "./commands/mcp-inspect.js";
 import { mcpListCommand } from "./commands/mcp.js";
@@ -286,6 +287,15 @@ program
   )
   .action((transcript: string | undefined) => {
     statsCommand({ transcript });
+  });
+
+program
+  .command("doctor")
+  .description(
+    "One-command health check — API key, config, /user/balance reachability, tokenizer, sessions, hooks, Ollama (if used), project markers. Exit 1 on any fail; 0 on warn / clean.",
+  )
+  .action(async () => {
+    await doctorCommand();
   });
 
 program
