@@ -289,4 +289,53 @@ describe("webFetch", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("refuses upfront when Content-Length declares a body past the byte cap", async () => {
+    const originalFetch = globalThis.fetch;
+    // 50MB declared — well past the 10MB cap. Body text doesn't even
+    // need to match; the pre-flight check fires before we read it.
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response("ignored", {
+          status: 200,
+          headers: { "Content-Type": "text/html", "Content-Length": String(50 * 1024 * 1024) },
+        }),
+    ) as unknown as typeof fetch;
+    try {
+      await expect(webFetch("https://example.com/big.iso")).rejects.toThrow(
+        /content-length .* exceeds .* cap/,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("aborts mid-stream when an undeclared body crosses the byte cap", async () => {
+    // No Content-Length header → pre-flight passes; the streaming
+    // reader has to enforce the cap. Stream pushes 1MB chunks past
+    // the 10MB cap.
+    const originalFetch = globalThis.fetch;
+    const chunk = new Uint8Array(1024 * 1024).fill(65); // 1MB of 'A'
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        // 12 chunks → 12MB, past the 10MB cap.
+        for (let i = 0; i < 12; i++) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        }),
+    ) as unknown as typeof fetch;
+    try {
+      await expect(webFetch("https://example.com/chunked")).rejects.toThrow(
+        /response body exceeded .* cap/,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

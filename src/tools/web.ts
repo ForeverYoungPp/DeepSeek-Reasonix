@@ -47,6 +47,17 @@ export interface WebSearchOptions {
 const DEFAULT_FETCH_MAX_CHARS = 32_000;
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 const DEFAULT_TOPK = 5;
+/**
+ * Hard cap on raw response body size before HTML stripping. The
+ * extracted text gets capped further at {@link DEFAULT_FETCH_MAX_CHARS},
+ * but `await resp.text()` would otherwise read the entire body into
+ * memory first — a malicious or misconfigured server pointing at
+ * `https://example.com/big.iso` (or simply a docs site that serves
+ * a 50MB HTML changelog) would balloon Reasonix's heap before the
+ * char cap applies. 10MB is comfortably above any reasonable page
+ * (typical: 100KB-2MB) and bounds the worst case regardless.
+ */
+const FETCH_MAX_BYTES = 10 * 1024 * 1024;
 // Real-browser UA. Servers like Mojeek are bot-friendly but still gate
 // obvious scraper UAs; a stock Chrome string avoids the fast-path block.
 const USER_AGENT =
@@ -169,7 +180,15 @@ export async function webFetch(url: string, opts: WebFetchOptions = {}): Promise
   }
   if (!resp.ok) throw new Error(`web_fetch ${resp.status} for ${url}`);
   const contentType = resp.headers.get("content-type") ?? "";
-  const raw = await resp.text();
+  // Pre-check Content-Length when the server provides it. Cheaper to
+  // refuse upfront than to start streaming a 1GB ISO.
+  const declaredLen = Number(resp.headers.get("content-length") ?? "");
+  if (Number.isFinite(declaredLen) && declaredLen > FETCH_MAX_BYTES) {
+    throw new Error(
+      `web_fetch refused: content-length ${declaredLen} bytes exceeds ${FETCH_MAX_BYTES}-byte cap (${url})`,
+    );
+  }
+  const raw = await readBodyCapped(resp, FETCH_MAX_BYTES);
   const title = extractTitle(raw);
   const text = contentType.includes("text/html") ? htmlToText(raw) : raw;
   const truncated = text.length > maxChars;
@@ -177,6 +196,48 @@ export async function webFetch(url: string, opts: WebFetchOptions = {}): Promise
     ? `${text.slice(0, maxChars)}\n\n[… truncated ${text.length - maxChars} chars …]`
     : text;
   return { url, title, text: finalText, truncated };
+}
+
+/**
+ * Stream a Response body into a string, aborting once the byte total
+ * crosses {@link maxBytes}. `await resp.text()` reads the entire body
+ * eagerly — for a chunked-encoded response without a Content-Length
+ * header, that's a heap-balloon vector. Streaming with a hard cap
+ * fixes both the unknown-length case and any server that lies about
+ * Content-Length.
+ */
+async function readBodyCapped(resp: Response, maxBytes: number): Promise<string> {
+  if (!resp.body) return await resp.text();
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let total = 0;
+  let out = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* already torn down */
+        }
+        throw new Error(
+          `web_fetch refused: response body exceeded ${maxBytes}-byte cap (${total} bytes seen)`,
+        );
+      }
+      out += decoder.decode(value, { stream: true });
+    }
+    out += decoder.decode();
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* reader already cancelled / released */
+    }
+  }
+  return out;
 }
 
 /**

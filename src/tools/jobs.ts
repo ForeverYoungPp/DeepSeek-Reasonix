@@ -247,6 +247,15 @@ export class JobRegistry {
     this.jobs.set(id, job);
 
     let readyMatched = false;
+    // Sliding window for cross-chunk ready-signal matching. A banner
+    // line might land split across two reads — we want the regex to
+    // see it as one piece — but testing against the full `job.output`
+    // (which can be tens of KB by the time the server is up) is
+    // O(N²) when 9 regexes each run on a growing buffer per chunk.
+    // 1KB is comfortably bigger than any banner line we look for and
+    // bounds the per-chunk regex cost regardless of total output.
+    let recentForReady = "";
+    const READY_WINDOW = 1024;
     const onData = (chunk: Buffer | string) => {
       const s = chunk.toString();
       job.totalBytesWritten += s.length;
@@ -261,8 +270,9 @@ export class JobRegistry {
         job.output = `[… older output dropped …]\n${job.output.slice(start)}`;
       }
       if (!readyMatched) {
+        recentForReady = (recentForReady + s).slice(-READY_WINDOW);
         for (const re of READY_SIGNALS) {
-          if (re.test(s) || re.test(job.output)) {
+          if (re.test(recentForReady)) {
             readyMatched = true;
             job.signalReady();
             break;
