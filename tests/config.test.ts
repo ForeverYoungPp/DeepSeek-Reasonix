@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   addProjectShellAllowed,
+  clearProjectShellAllowed,
   editModeHintShown,
   isPlausibleKey,
   loadApiKey,
@@ -13,6 +14,7 @@ import {
   markEditModeHintShown,
   readConfig,
   redactKey,
+  removeProjectShellAllowed,
   saveApiKey,
   saveEditMode,
   saveReasoningEffort,
@@ -171,6 +173,46 @@ describe("config", () => {
     addProjectShellAllowed("/a", "", path);
     addProjectShellAllowed("/a", "   ", path);
     expect(loadProjectShellAllowed("/a", path)).toEqual([]);
+  });
+
+  it("removeProjectShellAllowed drops one entry by exact match", () => {
+    addProjectShellAllowed("/a", "npm install", path);
+    addProjectShellAllowed("/a", "git commit", path);
+    expect(removeProjectShellAllowed("/a", "npm install", path)).toBe(true);
+    expect(loadProjectShellAllowed("/a", path)).toEqual(["git commit"]);
+  });
+
+  it("removeProjectShellAllowed returns false when prefix isn't stored", () => {
+    addProjectShellAllowed("/a", "npm install", path);
+    expect(removeProjectShellAllowed("/a", "git commit", path)).toBe(false);
+    expect(loadProjectShellAllowed("/a", path)).toEqual(["npm install"]);
+  });
+
+  it("removeProjectShellAllowed doesn't prefix-match (literal only)", () => {
+    addProjectShellAllowed("/a", "git push origin main", path);
+    expect(removeProjectShellAllowed("/a", "git push", path)).toBe(false);
+    expect(loadProjectShellAllowed("/a", path)).toEqual(["git push origin main"]);
+  });
+
+  it("removeProjectShellAllowed scoped to project (doesn't leak across roots)", () => {
+    addProjectShellAllowed("/a", "lint", path);
+    addProjectShellAllowed("/b", "lint", path);
+    expect(removeProjectShellAllowed("/a", "lint", path)).toBe(true);
+    expect(loadProjectShellAllowed("/a", path)).toEqual([]);
+    expect(loadProjectShellAllowed("/b", path)).toEqual(["lint"]);
+  });
+
+  it("clearProjectShellAllowed wipes one project, returns count, leaves others alone", () => {
+    addProjectShellAllowed("/a", "lint", path);
+    addProjectShellAllowed("/a", "test", path);
+    addProjectShellAllowed("/b", "build", path);
+    expect(clearProjectShellAllowed("/a", path)).toBe(2);
+    expect(loadProjectShellAllowed("/a", path)).toEqual([]);
+    expect(loadProjectShellAllowed("/b", path)).toEqual(["build"]);
+  });
+
+  it("clearProjectShellAllowed returns 0 when nothing stored", () => {
+    expect(clearProjectShellAllowed("/empty", path)).toBe(0);
   });
 
   it("loadEditMode defaults to 'review' when unset", () => {

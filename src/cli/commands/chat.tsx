@@ -9,6 +9,7 @@ import { bridgeMcpTools } from "../../mcp/registry.js";
 import { parseMcpSpec } from "../../mcp/spec.js";
 import { SseTransport } from "../../mcp/sse.js";
 import { type McpTransport, StdioTransport } from "../../mcp/stdio.js";
+import { StreamableHttpTransport } from "../../mcp/streamable-http.js";
 import {
   loadSessionMessages,
   rewriteSession,
@@ -192,7 +193,9 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
         const transport: McpTransport =
           spec.transport === "sse"
             ? new SseTransport({ url: spec.url })
-            : new StdioTransport({ command: spec.command, args: spec.args });
+            : spec.transport === "streamable-http"
+              ? new StreamableHttpTransport({ url: spec.url })
+              : new StdioTransport({ command: spec.command, args: spec.args });
         const mcp = new McpClient({ transport });
         await mcp.initialize();
         const bridge = await bridgeMcpTools(mcp, {
@@ -222,7 +225,9 @@ export async function chatCommand(opts: ChatOptions): Promise<void> {
         }
         const label = spec.name ?? "anon";
         const source =
-          spec.transport === "sse" ? spec.url : `${spec.command} ${spec.args.join(" ")}`;
+          spec.transport === "sse" || spec.transport === "streamable-http"
+            ? spec.url
+            : `${spec.command} ${spec.args.join(" ")}`;
         process.stderr.write(
           `▸ MCP[${label}]: ${bridge.registeredNames.length} tool(s) from ${source}\n`,
         );

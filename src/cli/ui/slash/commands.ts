@@ -70,6 +70,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: "list active hooks (settings.json under .reasonix/) · reload re-reads from disk",
   },
   {
+    cmd: "permissions",
+    argsHint: "[list|add <prefix>|remove <prefix|N>|clear confirm]",
+    summary:
+      "show / edit shell allowlist (builtin read-only · per-project: ~/.reasonix/config.json)",
+    argCompleter: ["list", "add", "remove", "clear"],
+  },
+  {
     cmd: "cwd",
     argsHint: "<path>",
     summary:

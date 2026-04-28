@@ -95,3 +95,30 @@ describe("parseMcpSpec: sse", () => {
     expect(spec.transport).toBe("stdio");
   });
 });
+
+describe("parseMcpSpec: streamable-http", () => {
+  it("parses an anonymous streamable+https URL and strips the prefix", () => {
+    const spec = parseMcpSpec("streamable+https://example.com/mcp");
+    expect(spec.transport).toBe("streamable-http");
+    if (spec.transport !== "streamable-http") throw new Error("unreachable");
+    expect(spec.name).toBeNull();
+    expect(spec.url).toBe("https://example.com/mcp");
+  });
+
+  it("parses a namespaced streamable+http URL (localhost dev)", () => {
+    const spec = parseMcpSpec("local=streamable+http://127.0.0.1:9000/mcp");
+    if (spec.transport !== "streamable-http") throw new Error("unreachable");
+    expect(spec.name).toBe("local");
+    expect(spec.url).toBe("http://127.0.0.1:9000/mcp");
+  });
+
+  it("is case-insensitive on the streamable+ prefix", () => {
+    const spec = parseMcpSpec("STREAMABLE+HTTPS://example.com/mcp");
+    expect(spec.transport).toBe("streamable-http");
+  });
+
+  it("plain https without `streamable+` still routes to SSE for back-compat", () => {
+    const spec = parseMcpSpec("https://example.com/mcp");
+    expect(spec.transport).toBe("sse");
+  });
+});

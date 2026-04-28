@@ -194,6 +194,50 @@ export function addProjectShellAllowed(
 }
 
 /**
+ * Drop one prefix from the project's shell-allowed list. Returns true
+ * when the prefix was present (and removed), false when it wasn't —
+ * lets `/permissions remove` distinguish "removed" from "no such entry"
+ * without a separate read. Match is exact after trim; we deliberately
+ * do NOT prefix-match here (e.g. removing `git` shouldn't also drop
+ * `git push origin main` if the user added both).
+ */
+export function removeProjectShellAllowed(
+  rootDir: string,
+  prefix: string,
+  path: string = defaultConfigPath(),
+): boolean {
+  const trimmed = prefix.trim();
+  if (!trimmed) return false;
+  const cfg = readConfig(path);
+  const existing = cfg.projects?.[rootDir]?.shellAllowed ?? [];
+  if (!existing.includes(trimmed)) return false;
+  const next = existing.filter((p) => p !== trimmed);
+  if (!cfg.projects) cfg.projects = {};
+  if (!cfg.projects[rootDir]) cfg.projects[rootDir] = {};
+  cfg.projects[rootDir].shellAllowed = next;
+  writeConfig(cfg, path);
+  return true;
+}
+
+/**
+ * Wipe every persisted shell-allow entry for a project. Returns the
+ * number of prefixes that were dropped — zero if nothing was stored.
+ */
+export function clearProjectShellAllowed(
+  rootDir: string,
+  path: string = defaultConfigPath(),
+): number {
+  const cfg = readConfig(path);
+  const existing = cfg.projects?.[rootDir]?.shellAllowed ?? [];
+  if (existing.length === 0) return 0;
+  if (!cfg.projects) cfg.projects = {};
+  if (!cfg.projects[rootDir]) cfg.projects[rootDir] = {};
+  cfg.projects[rootDir].shellAllowed = [];
+  writeConfig(cfg, path);
+  return existing.length;
+}
+
+/**
  * Read the persisted edit-mode. Unknown values fall back to "review" so
  * a user who hand-edits the file into an invalid state still gets the
  * safe default. `reasonix code` calls this at launch and the App lets

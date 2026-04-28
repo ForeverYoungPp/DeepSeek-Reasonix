@@ -15,6 +15,7 @@ import type { InspectionReport } from "../../mcp/inspect.js";
 import { parseMcpSpec } from "../../mcp/spec.js";
 import { SseTransport } from "../../mcp/sse.js";
 import { type McpTransport, StdioTransport } from "../../mcp/stdio.js";
+import { StreamableHttpTransport } from "../../mcp/streamable-http.js";
 
 export interface McpInspectOptions {
   /** The raw --mcp spec string (e.g. `fs=npx -y @modelcontextprotocol/server-filesystem .`). */
@@ -28,7 +29,9 @@ export async function mcpInspectCommand(opts: McpInspectOptions): Promise<void> 
   const transport: McpTransport =
     spec.transport === "sse"
       ? new SseTransport({ url: spec.url })
-      : new StdioTransport({ command: spec.command, args: spec.args });
+      : spec.transport === "streamable-http"
+        ? new StreamableHttpTransport({ url: spec.url })
+        : new StdioTransport({ command: spec.command, args: spec.args });
   const client = new McpClient({ transport });
   try {
     await client.initialize();

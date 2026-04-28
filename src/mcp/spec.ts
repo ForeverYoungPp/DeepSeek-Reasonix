@@ -2,11 +2,13 @@
  * Parse the `--mcp` CLI argument into a transport-tagged spec.
  *
  * Accepted forms:
- *   "name=command args..."      → stdio, namespaced (tools prefixed with `name_`)
- *   "command args..."           → stdio, anonymous
- *   "name=https://host/sse"     → SSE, namespaced
- *   "https://host/sse"          → SSE, anonymous
- *   ("http://" is also honored — useful for local dev servers.)
+ *   "name=command args..."             → stdio, namespaced (tools prefixed with `name_`)
+ *   "command args..."                  → stdio, anonymous
+ *   "name=https://host/sse"            → HTTP+SSE (2024-11-05), namespaced
+ *   "https://host/sse"                 → HTTP+SSE (2024-11-05), anonymous
+ *   "name=streamable+https://host/mcp" → Streamable HTTP (2025-03-26), namespaced
+ *   "streamable+https://host/mcp"      → Streamable HTTP (2025-03-26), anonymous
+ *   ("http://" / "streamable+http://" also honored — useful for local dev.)
  *
  * The identifier regex before `=` is deliberately narrow
  * (`[a-zA-Z_][a-zA-Z0-9_]*`) so Windows drive letters ("C:\\...") and
@@ -15,9 +17,15 @@
  * with `foo=...` as a bare command, they can wrap it in quotes inside the
  * shell command string.
  *
- * Transport is selected solely by whether the body begins with `http://`
- * or `https://`. Anything else is stdio — including ws:// (unsupported)
- * which will surface later as a spawn error, keeping the rule local.
+ * Transport selection:
+ *   - body starts with `streamable+http(s)://` → Streamable HTTP. The
+ *     `streamable+` prefix is stripped from the URL we hand the transport.
+ *   - body starts with `http(s)://`            → HTTP+SSE (2024-11-05).
+ *     Default for plain http URLs to preserve back-compat with users who
+ *     already have `--mcp https://...` config entries pointed at SSE
+ *     servers; opt into Streamable HTTP explicitly.
+ *   - anything else                            → stdio (including ws://,
+ *     which will surface later as a spawn error).
  */
 
 import { shellSplit } from "./shell-split.js";
@@ -39,10 +47,18 @@ export interface SseMcpSpec {
   url: string;
 }
 
-export type McpSpec = StdioMcpSpec | SseMcpSpec;
+export interface StreamableHttpMcpSpec {
+  transport: "streamable-http";
+  name: string | null;
+  /** Fully qualified Streamable HTTP endpoint URL (no `streamable+` prefix). */
+  url: string;
+}
+
+export type McpSpec = StdioMcpSpec | SseMcpSpec | StreamableHttpMcpSpec;
 
 const NAME_PREFIX = /^([a-zA-Z_][a-zA-Z0-9_]*)=(.*)$/;
 const HTTP_URL = /^https?:\/\//i;
+const STREAMABLE_PREFIX = /^streamable\+(https?:\/\/.+)$/i;
 
 export function parseMcpSpec(input: string): McpSpec {
   const trimmed = input.trim();
@@ -56,6 +72,11 @@ export function parseMcpSpec(input: string): McpSpec {
 
   if (!body) {
     throw new Error(`MCP spec has name but no command: ${input}`);
+  }
+
+  const streamMatch = STREAMABLE_PREFIX.exec(body);
+  if (streamMatch) {
+    return { transport: "streamable-http", name, url: streamMatch[1]! };
   }
 
   if (HTTP_URL.test(body)) {

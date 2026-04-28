@@ -3,6 +3,68 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] — 2026-04-27
+
+**Headline:** Two long-deferred items land — `/permissions` makes the
+shell allowlist auditable and editable from inside the TUI, and
+Streamable HTTP MCP transport (2025-03-26 spec) clears the last debt
+from the v0.3 deferred queue.
+
+### Added
+
+- **`/permissions`** — list / add / remove / clear the shell
+  allowlist without leaving the session. Bare `/permissions` shows
+  the current edit mode (review / auto / yolo with a yolo-bypasses-
+  allowlist banner), the per-project entries with 1-based indices,
+  and the read-only builtin list grouped by leading verb. Subcommands:
+  `/permissions add <prefix>` (multi-token OK), `/permissions remove
+  <prefix-or-N>` (literal match or list index), `/permissions clear
+  confirm`. Refuses to add a prefix that's already in the builtin
+  list (no redundant project entry) and refuses to remove a builtin
+  (read-only). Mutating subcommands require code mode. `perms`
+  registered as alias.
+- **`removeProjectShellAllowed` + `clearProjectShellAllowed`**
+  exported from `src/config.ts`. The remove helper does literal-
+  prefix match (not prefix-of-prefix), so dropping `git` doesn't
+  accidentally remove `git push origin main` if both were stored.
+- **MCP Streamable HTTP transport (2025-03-26 spec)** —
+  `src/mcp/streamable-http.ts` implements the new single-endpoint
+  protocol. POSTs JSON-RPC frames, handles all three response shapes
+  (202 Accepted for notifications, `application/json` for single
+  responses, `text/event-stream` for multi-frame streams covering
+  progress + response). Captures `Mcp-Session-Id` from the first
+  response that hands one out and echoes it on every subsequent
+  request; surfaces 404-with-session as a "session expired" error
+  so callers know to reinitialize. Long-lived GET stream for
+  unsolicited server-initiated frames is deliberately deferred —
+  POST-only handles full request/response/notification traffic
+  for every server we'd realistically point at today.
+- **Spec parser** — `streamable+http(s)://` prefix routes to the
+  new transport (`{ transport: "streamable-http", url, name }`).
+  Plain `http(s)://` still routes to SSE (2024-11-05) so existing
+  `--mcp` config entries keep working without surprise upgrades.
+  Wired through `chat.tsx`, `run.ts`, and `reasonix mcp inspect`.
+  Public API gains `StreamableHttpTransport` + the
+  `StreamableHttpMcpSpec` type re-export.
+
+### Tests
+
+- `tests/permissions-slash.test.ts` — 16 tests covering listing,
+  add, remove (by prefix and by 1-based index), clear, mode banner,
+  builtin-collision rejection, codeRoot guard, alias.
+- `tests/config.test.ts` — 6 new tests for `removeProjectShellAllowed`
+  / `clearProjectShellAllowed` (literal-only matching, scoping per
+  project, idempotent counts).
+- `tests/mcp-streamable-http.test.ts` — 8 tests against an in-process
+  `http.Server` fake that speaks the 2025-03-26 wire shape: JSON
+  response delivery, 202 ack as no-op, session-id capture+echo,
+  multi-frame SSE ordering (progress → response), full McpClient
+  initialize → tools/list round-trip, 404+session = "expired",
+  500-as-error from `send()`, `close()` unblocks idle iterators.
+- `tests/mcp-spec.test.ts` — 4 tests for the new prefix parsing.
+
+1521 tests pass (+24). Lint / typecheck / build clean.
+
 ## [0.11.2] — 2026-04-27
 
 **Headline:** `/init` synthesizes a baseline REASONIX.md so a new

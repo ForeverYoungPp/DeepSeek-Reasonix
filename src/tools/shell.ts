@@ -83,7 +83,7 @@ const DEFAULT_MAX_OUTPUT_CHARS = 32_000;
  * is "exit 1 with output." Nothing that can rewrite state, escalate,
  * or touch the network.
  */
-const BUILTIN_ALLOWLIST: ReadonlyArray<string> = [
+export const BUILTIN_ALLOWLIST: ReadonlyArray<string> = [
   // Repo inspection
   "git status",
   "git diff",
