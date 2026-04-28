@@ -3,6 +3,31 @@
 All notable changes to Reasonix. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.10] — 2026-04-28
+
+**Headline:** Move the in-flight indicator out of the top-left
+corner and put the live counters next to it. Previously the
+spinner appeared above the message stream — far from where the
+user's eyes already were (input + status bar) — and the only
+moving signal during a turn was the streaming text itself.
+
+### Chat panel
+
+- New **InFlightRow** rendered just above the ChatStatusBar
+  whenever a turn is in flight. Format:
+  `⠋ thinking · 2.3s · reasoning 1,204 ch · out 0 ch · [Abort]`
+- Phase auto-flips between `thinking` (only reasoning growing),
+  `streaming` (text growing), and `waiting` (neither — model is
+  thinking with no token output yet, e.g. before the first
+  delta arrives).
+- Elapsed seconds tick every 500ms via a per-turn interval so
+  the user sees motion even when the model is in a long pause
+  between deltas.
+- Character counts come from the existing `streaming` state — no
+  new wire fields, just rendering data we already have.
+- Top "turn in flight" row is gone; only `statusLine` notices
+  still render up there when not busy.
+
 ## [0.12.9] — 2026-04-28
 
 **Headline:** Semantic indexing without leaving the session.

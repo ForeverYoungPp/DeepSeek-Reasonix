@@ -1164,6 +1164,25 @@ function ChatPanel() {
   // the input area.
   const [stats, setStats] = useState(null);
   const [overviewModel, setOverviewModel] = useState(null);
+  // Wall-clock timestamp the current turn started at — populated when
+  // busy flips true, cleared when it flips false. Drives the "elapsed
+  // Ns" readout in the in-flight indicator. Refreshed once per second
+  // by `nowTick` so the seconds counter ticks visibly even between
+  // SSE deltas.
+  const [turnStartedAt, setTurnStartedAt] = useState(null);
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    if (!busy) return;
+    const id = setInterval(() => setNowTick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, [busy]);
+  useEffect(() => {
+    if (busy) {
+      if (!turnStartedAt) setTurnStartedAt(Date.now());
+    } else {
+      setTurnStartedAt(null);
+    }
+  }, [busy, turnStartedAt]);
   // Sticks to bottom only while the user is already near the bottom.
   // Once they scroll up to read older content the streaming deltas no
   // longer yank the view back. Re-armed when they scroll back to the
@@ -1574,11 +1593,9 @@ function ChatPanel() {
       </div>
 
       ${
-        busy
-          ? html`<div class="chat-status"><span class="spinner"></span> turn in flight · <button onClick=${abort}>Abort (Esc)</button>${statusLine ? html` · <span class="muted">${statusLine}</span>` : null}</div>`
-          : statusLine
-            ? html`<div class="chat-status"><span class="muted">${statusLine}</span></div>`
-            : null
+        !busy && statusLine
+          ? html`<div class="chat-status"><span class="muted">${statusLine}</span></div>`
+          : null
       }
       ${error ? html`<div class="notice err">${error}</div>` : null}
 
@@ -1636,7 +1653,61 @@ function ChatPanel() {
         </div>
       </div>
 
+      ${
+        busy
+          ? html`<${InFlightRow}
+              streaming=${streaming}
+              startedAt=${turnStartedAt}
+              statusLine=${statusLine}
+              onAbort=${abort}
+              tick=${nowTick}
+            />`
+          : null
+      }
       <${ChatStatusBar} stats=${stats} model=${overviewModel} />
+    </div>
+  `;
+}
+
+// Live "what's the model doing right now" strip. Lives just above the
+// ChatStatusBar so the user's eyes don't have to leave the input area
+// to see whether the turn is alive — ticks every 500ms via the parent's
+// nowTick so the seconds counter shows visible motion even when the
+// SSE stream is silent (model thinking, waiting on a tool, etc).
+function InFlightRow({ streaming, startedAt, statusLine, onAbort, tick: _tick }) {
+  const elapsedMs = startedAt ? Date.now() - startedAt : 0;
+  const elapsed = (elapsedMs / 1000).toFixed(1);
+  const reasoningLen = streaming?.reasoning?.length ?? 0;
+  const textLen = streaming?.text?.length ?? 0;
+  const phase =
+    reasoningLen > 0 && textLen === 0 ? "thinking" : textLen > 0 ? "streaming" : "waiting";
+  return html`
+    <div class="chat-inflight">
+      <span class="spinner"></span>
+      <span class="chat-inflight-phase">${phase}</span>
+      <span class="chat-inflight-sep">·</span>
+      <span class="muted">${elapsed}s</span>
+      ${
+        textLen > 0 || reasoningLen > 0
+          ? html`
+            <span class="chat-inflight-sep">·</span>
+            <span class="muted">
+              ${reasoningLen > 0 ? html`reasoning ${reasoningLen.toLocaleString()} ch` : null}
+              ${reasoningLen > 0 && textLen > 0 ? html`<span> · </span>` : null}
+              ${textLen > 0 ? html`out ${textLen.toLocaleString()} ch` : null}
+            </span>
+          `
+          : null
+      }
+      ${
+        statusLine
+          ? html`
+            <span class="chat-inflight-sep">·</span>
+            <span class="muted">${statusLine}</span>
+          `
+          : null
+      }
+      <button class="chat-inflight-abort" onClick=${onAbort}>Abort (Esc)</button>
     </div>
   `;
 }
