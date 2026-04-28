@@ -351,4 +351,53 @@ describe("formatHookOutcomeMessage", () => {
     expect(msg).toContain(`${"x".repeat(60)}…`);
     expect(msg).not.toContain("x".repeat(61));
   });
+
+  it("flags truncated output so users know their hook wrote more than was kept", () => {
+    const msg = formatHookOutcomeMessage({
+      hook: baseHook,
+      decision: "warn",
+      exitCode: 1,
+      stdout: "",
+      stderr: "first line of many",
+      durationMs: 5,
+      truncated: true,
+    });
+    expect(msg).toContain("(output truncated at 256KB)");
+  });
+});
+
+describe("runHooks output truncation", () => {
+  it("propagates the spawner's truncated flag onto the HookOutcome", async () => {
+    const hook: ResolvedHook = {
+      event: "PostToolUse",
+      scope: "project",
+      source: "/tmp/p",
+      command: "noop",
+    };
+    const spawner = makeSpawner([
+      { exitCode: 0, stdout: "x".repeat(1024), stderr: "", timedOut: false, truncated: true },
+    ]);
+    const report = await runHooks({
+      payload: { event: "PostToolUse", cwd: "/tmp", toolName: "edit_file" },
+      hooks: [hook],
+      spawner,
+    });
+    expect(report.outcomes[0]?.truncated).toBe(true);
+  });
+
+  it("leaves truncated undefined when the spawner did not flag it", async () => {
+    const hook: ResolvedHook = {
+      event: "PostToolUse",
+      scope: "project",
+      source: "/tmp/p",
+      command: "noop",
+    };
+    const spawner = makeSpawner([ok({ stdout: "small" })]);
+    const report = await runHooks({
+      payload: { event: "PostToolUse", cwd: "/tmp", toolName: "edit_file" },
+      hooks: [hook],
+      spawner,
+    });
+    expect(report.outcomes[0]?.truncated).toBeUndefined();
+  });
 });

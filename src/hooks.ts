@@ -117,6 +117,13 @@ export interface HookOutcome {
   /** Captured stderr (trimmed). The block / warn message comes from here. */
   stderr: string;
   durationMs: number;
+  /**
+   * True when stdout or stderr crossed the per-stream byte cap and was
+   * truncated. The hook still completed; the loop just sees a clipped
+   * view of its output. Surfaced via `formatHookOutcomeMessage` so the
+   * user knows their script wrote more than Reasonix kept.
+   */
+  truncated?: boolean;
 }
 
 /** Aggregate report for `runHooks`. */
@@ -246,7 +253,26 @@ export interface HookSpawnResult {
   timedOut: boolean;
   /** True iff spawn() itself failed (ENOENT, EACCES, …). */
   spawnError?: Error;
+  /**
+   * True iff stdout or stderr was capped at the byte limit. The hook
+   * still ran to completion / timeout, but downstream consumers see a
+   * truncated view of its output. Surface this in the UI so a hook
+   * author who relies on long output knows the loop didn't see all
+   * of it.
+   */
+  truncated?: boolean;
 }
+
+/**
+ * Per-stream cap on hook output. 256KB matches the shape of what
+ * hooks are actually for — short error messages, validator stderr,
+ * a `git status --short` summary — not full build logs. A buggy or
+ * runaway hook (`cat large.bin`, infinite `yes`) used to accumulate
+ * unbounded into Reasonix's heap until the timeout fired; with the
+ * cap the worst case is 256KB stdout + 256KB stderr per hook
+ * regardless of how chatty the child gets.
+ */
+const HOOK_OUTPUT_CAP_BYTES = 256 * 1024;
 
 export type HookSpawner = (input: HookSpawnInput) => Promise<HookSpawnResult>;
 
@@ -267,8 +293,14 @@ function defaultSpawner(input: HookSpawnInput): Promise<HookSpawnResult> {
       shell: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    let stdout = "";
-    let stderr = "";
+    // Collect raw bytes per stream and decode once at close so a
+    // multi-byte UTF-8 sequence split across data chunks doesn't
+    // corrupt — same approach shell.ts uses for run_command output.
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let truncated = false;
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -284,29 +316,46 @@ function defaultSpawner(input: HookSpawnInput): Promise<HookSpawnResult> {
       }, 500);
     }, input.timeoutMs);
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
+    const onChunk = (kind: "stdout" | "stderr", chunk: Buffer) => {
+      const target = kind === "stdout" ? stdoutChunks : stderrChunks;
+      const seen = kind === "stdout" ? stdoutBytes : stderrBytes;
+      if (seen >= HOOK_OUTPUT_CAP_BYTES) {
+        truncated = true;
+        return;
+      }
+      const remaining = HOOK_OUTPUT_CAP_BYTES - seen;
+      if (chunk.length > remaining) {
+        target.push(chunk.subarray(0, remaining));
+        if (kind === "stdout") stdoutBytes = HOOK_OUTPUT_CAP_BYTES;
+        else stderrBytes = HOOK_OUTPUT_CAP_BYTES;
+        truncated = true;
+      } else {
+        target.push(chunk);
+        if (kind === "stdout") stdoutBytes += chunk.length;
+        else stderrBytes += chunk.length;
+      }
+    };
+    child.stdout.on("data", (chunk: Buffer) => onChunk("stdout", chunk));
+    child.stderr.on("data", (chunk: Buffer) => onChunk("stderr", chunk));
     child.once("error", (err) => {
       clearTimeout(timer);
       resolve({
         exitCode: null,
-        stdout,
-        stderr,
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
         timedOut: false,
         spawnError: err,
+        truncated: truncated || undefined,
       });
     });
     child.once("close", (code) => {
       clearTimeout(timer);
       resolve({
         exitCode: code,
-        stdout: stdout.trim(),
-        stderr: stderr.trim(),
+        stdout: Buffer.concat(stdoutChunks).toString("utf8").trim(),
+        stderr: Buffer.concat(stderrChunks).toString("utf8").trim(),
         timedOut,
+        truncated: truncated || undefined,
       });
     });
 
@@ -334,7 +383,8 @@ export function formatHookOutcomeMessage(outcome: HookOutcome): string {
     outcome.hook.command.length > 60
       ? `${outcome.hook.command.slice(0, 60)}…`
       : outcome.hook.command;
-  const head = `hook ${tag} \`${cmd}\` ${outcome.decision}`;
+  const truncTag = outcome.truncated ? " (output truncated at 256KB)" : "";
+  const head = `hook ${tag} \`${cmd}\` ${outcome.decision}${truncTag}`;
   return detail ? `${head}: ${detail}` : head;
 }
 
@@ -393,6 +443,7 @@ export async function runHooks(opts: RunHooksOptions): Promise<HookReport> {
         (raw.spawnError ? raw.spawnError.message : "") ||
         (raw.timedOut ? `hook timed out after ${timeoutMs}ms` : ""),
       durationMs: Date.now() - start,
+      truncated: raw.truncated,
     });
     if (decision === "block") {
       blocked = true;
