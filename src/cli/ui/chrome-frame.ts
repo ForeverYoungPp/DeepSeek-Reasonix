@@ -23,7 +23,7 @@
  */
 
 import type { EditMode } from "../../config.js";
-import { type Frame, empty, text, vstack } from "../../frame/index.js";
+import { type Frame, empty, stringWidth, text, vstack } from "../../frame/index.js";
 import type { Cell } from "../../frame/index.js";
 import type { SessionSummary } from "../../telemetry.js";
 import { COLOR, GRADIENT } from "./theme.js";
@@ -152,31 +152,72 @@ function chromeRowFrame(props: ChromeFrameProps & { narrow: boolean; coldStart: 
 
 /**
  * Place the left segment at column 0 and the right segment flush
- * against the rightmost cell, padding the middle with spaces. If
- * left + right would exceed `width`, the right segment is preserved
- * and the left is truncated with no ellipsis (matching the legacy
- * flex-grow behaviour: the spacer collapses to 0 first).
+ * against the rightmost cell, padding the middle with spaces.
+ *
+ * Overflow strategy — right side is more important (it carries the
+ * status pills the user actively watches):
+ *   1. left + right <= width  →  spacer between
+ *   2. left + right >  width  →  truncate left from its right edge
+ *                                until right fits in full
+ *   3. right alone > width    →  truncate right from its LEFT edge
+ *                                (drop update / mode / pro pills first;
+ *                                cost / balance / cache live at the
+ *                                rightmost end and survive longest)
+ *
+ * The wallet pill is in the middle of the right group, so the case-3
+ * "drop earliest pills" rule keeps it visible even on terminals with
+ * many active pills competing for space.
  */
 function composeRow(left: Cell[], right: Cell[], width: number): Frame {
   const leftW = visualWidth(left);
   const rightW = visualWidth(right);
-  if (leftW + rightW >= width) {
-    // Truncate left so right always renders.
-    let cut = 0;
-    let cutW = 0;
-    while (cut < left.length && cutW + (left[cut]!.tail ? 0 : left[cut]!.width) <= width - rightW) {
-      cutW += left[cut]!.tail ? 0 : left[cut]!.width;
-      cut++;
+
+  // Case 3: right alone overflows — keep its tail.
+  if (rightW > width) {
+    const out: Cell[] = [];
+    let needed = width;
+    for (let i = right.length - 1; i >= 0 && needed > 0; i--) {
+      const c = right[i]!;
+      const cw = c.tail ? 0 : c.width;
+      if (cw <= needed) {
+        out.unshift(c);
+        if (!c.tail) needed -= c.width;
+      } else {
+        break;
+      }
     }
-    const cells = [...left.slice(0, cut), ...right];
-    // pad to width if still short
-    let curW = visualWidth(cells);
-    while (curW < width) {
+    while (visualWidth(out) < width) out.unshift(SPACE);
+    return { width, rows: [out] };
+  }
+
+  // Case 2: combined overflow — truncate left.
+  if (leftW + rightW > width) {
+    const budget = width - rightW;
+    const cells: Cell[] = [];
+    let used = 0;
+    for (const c of left) {
+      const cw = c.tail ? 0 : c.width;
+      if (used + cw > budget) break;
+      cells.push(c);
+      used += cw;
+    }
+    while (used < budget) {
       cells.push(SPACE);
-      curW += 1;
+      used += 1;
+    }
+    cells.push(...right);
+    // Verify width invariant — if right contained tail cells whose
+    // head was outside the slice, we'd be off; pad/truncate as
+    // last resort.
+    let cur = visualWidth(cells);
+    while (cur < width) {
+      cells.push(SPACE);
+      cur += 1;
     }
     return { width, rows: [cells] };
   }
+
+  // Case 1: fits with spacer.
   const gap = width - leftW - rightW;
   const cells = [...left];
   for (let i = 0; i < gap; i++) cells.push(SPACE);
@@ -213,27 +254,26 @@ function budgetFrame(spent: number, cap: number, width: number): Frame {
 
 // ─── helpers ─────────────────────────────────────────────────────
 
-/** Append a styled string to a cell array. Mutates in-place. */
+/**
+ * Append a styled string to a cell array. Mutates in-place.
+ *
+ * The width passed to `text()` is the EXACT visual width of `s` so
+ * `text()` doesn't right-pad — that way `appendCells(out, "  ")`
+ * (intentional inter-pill spacer) still emits two SPACE cells, where
+ * an earlier "pad-then-strip-trailing" approach was eating them and
+ * collapsing pills into each other on the chrome row.
+ */
 function appendCells(
   out: Cell[],
   s: string,
   opts: { fg?: string; bg?: string; bold?: boolean; dim?: boolean; italic?: boolean } = {},
 ): void {
-  // Reuse the Frame text() to get correct grapheme + 2-wide handling.
-  const f = text(s, { ...opts, width: Math.max(s.length * 2 + 4, 8) });
+  if (s.length === 0) return;
+  const w = stringWidth(s);
+  if (w === 0) return;
+  const f = text(s, { ...opts, width: w });
   if (f.rows.length === 0) return;
-  const row = f.rows[0]!;
-  // Strip trailing pad spaces (text() right-pads to width).
-  let stop = row.length;
-  while (
-    stop > 0 &&
-    row[stop - 1]!.char === " " &&
-    row[stop - 1]!.fg === undefined &&
-    row[stop - 1]!.bg === undefined
-  ) {
-    stop--;
-  }
-  for (let i = 0; i < stop; i++) out.push(row[i]!);
+  for (const c of f.rows[0]!) out.push(c);
 }
 
 function visualWidth(cells: readonly Cell[]): number {

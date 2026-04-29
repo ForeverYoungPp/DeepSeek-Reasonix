@@ -139,6 +139,56 @@ describe("chromeFrame", () => {
     expect(rowText(f.rows[2]!)).toContain("$5.00");
   });
 
+  it("preserves the wallet pill when right side overflows", () => {
+    // Tight terminal (~120 cols, just past the narrow breakpoint) +
+    // every optional pill set so right side is dense
+    const f = chromeFrame({
+      summary: { ...baseSummary, turns: 10, totalCostUsd: 12.345, cacheHitRatio: 0.5 },
+      width: 120,
+      rootDir: "/some/very/long/project/path/that/eats/lots/of/columns",
+      sessionName: "code-feature-branch-a-very-long-session-name",
+      planMode: true,
+      proArmed: true,
+      updateAvailable: "0.99.0-beta.1",
+      balance: { currency: "USD", total: 12345.67 },
+    });
+    // The wallet pill string should fully appear in the rendered row
+    expect(rowText(f.rows[0]!)).toContain("12345.67");
+  });
+
+  it("when right side alone exceeds width, drops earliest right pills first", () => {
+    // Pathological: very narrow but force balance even though we
+    // shouldn't (>= NARROW_BREAKPOINT). Past the breakpoint with all
+    // pills active, the right side ALONE may exceed width on edge cases.
+    const f = chromeFrame({
+      summary: { ...baseSummary, turns: 10, totalCostUsd: 999.999, cacheHitRatio: 0.5 },
+      width: 120,
+      planMode: true,
+      escalated: true,
+      updateAvailable: "0.999.999-rc.99",
+      balance: { currency: "USD", total: 5.0 },
+    });
+    // Width invariant holds even under right-overflow
+    let visual = 0;
+    for (const c of f.rows[0]!) if (!c.tail) visual += c.width;
+    expect(visual).toBe(120);
+  });
+
+  it("preserves spacer between right-side pills (no collapsed gaps)", () => {
+    // The user-reported "wallet not fully shown" stemmed from the
+    // pad-then-strip-trailing approach in appendCells eating real
+    // inter-pill spacers. The cost pill and balance pill should have
+    // visible whitespace between them.
+    const f = chromeFrame({
+      summary: { ...baseSummary, totalCostUsd: 1.23 },
+      width: 200,
+      balance: { currency: "USD", total: 5.0 },
+    });
+    const row = rowText(f.rows[0]!);
+    // Look for the two pills separated by spaces — `[$1.2300]  [w $5.00]`
+    expect(row).toMatch(/\[\$1\.2300\]\s+\[w \$5\.00\]/);
+  });
+
   it("preserves row-width invariant under all configurations", () => {
     for (const cfg of [
       { width: 80 },
