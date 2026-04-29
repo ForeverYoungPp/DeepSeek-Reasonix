@@ -69,6 +69,24 @@ export interface KeyEvent {
    * keystrokes (e.g. a `\n` in a paste shouldn't fire submit).
    */
   paste?: boolean;
+  /**
+   * Mouse wheel up — fired when the user scrolls up on a terminal
+   * with mouse tracking enabled (xterm SGR mode 1006). Consumers use
+   * this to scroll the log region up by N events.
+   */
+  mouseScrollUp?: boolean;
+  /** Mouse wheel down — symmetric to `mouseScrollUp`. */
+  mouseScrollDown?: boolean;
+  /**
+   * Mouse click (left button press). `mouseRow` / `mouseCol` give
+   * the cell-grid position in 1-based coordinates the terminal
+   * emitted. Consumers use this to detect clicks on inline UI like a
+   * "↓ jump to latest" indicator row. Released-click events are
+   * suppressed — only the press fires.
+   */
+  mouseClick?: boolean;
+  mouseRow?: number;
+  mouseCol?: number;
 }
 
 type Subscriber = (ev: KeyEvent) => void;
@@ -446,6 +464,43 @@ export class StdinReader {
       // Stray paste-end — we shouldn't reach here outside paste mode,
       // but if we do, drop it silently.
       return;
+    }
+    // SGR mouse: `<button;col;rowM` (press) or `<button;col;rowm`
+    // (release). Only fired when the App enabled SGR mode + button-
+    // event tracking at startup. Buttons:
+    //   0 = left, 1 = middle, 2 = right
+    //   64 = scroll up, 65 = scroll down (no release event for wheel)
+    // We surface scroll wheels and left-button presses; the rest are
+    // dropped to avoid noisy events.
+    if (seq.length > 1 && seq.charCodeAt(0) === 60 /* '<' */) {
+      const tail = seq[seq.length - 1]!;
+      if (tail === "M" || tail === "m") {
+        const body = seq.slice(1, -1);
+        const parts = body.split(";");
+        if (parts.length === 3) {
+          const btn = Number.parseInt(parts[0]!, 10);
+          const col = Number.parseInt(parts[1]!, 10);
+          const row = Number.parseInt(parts[2]!, 10);
+          if (Number.isFinite(btn) && Number.isFinite(col) && Number.isFinite(row)) {
+            // Wheel up/down come as press-only (uppercase M).
+            if (tail === "M" && btn === 64) {
+              this.dispatch({ input: "", mouseScrollUp: true, mouseRow: row, mouseCol: col });
+              return;
+            }
+            if (tail === "M" && btn === 65) {
+              this.dispatch({ input: "", mouseScrollDown: true, mouseRow: row, mouseCol: col });
+              return;
+            }
+            // Left-click press only (button 0 with M; we ignore release `m`).
+            if (tail === "M" && btn === 0) {
+              this.dispatch({ input: "", mouseClick: true, mouseRow: row, mouseCol: col });
+              return;
+            }
+            // Other buttons / drag / release → drop silently.
+            return;
+          }
+        }
+      }
     }
     const ev = lookupCsi(seq);
     if (ev) this.dispatch(ev);

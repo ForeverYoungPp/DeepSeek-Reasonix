@@ -18,6 +18,7 @@ import { Box, Text } from "ink";
 import React, { useState } from "react";
 import { ModalCard } from "./ModalCard.js";
 import { useKeystroke } from "./keystroke-context.js";
+import { COLOR } from "./theme.js";
 import { useTick } from "./ticker.js";
 
 export interface PlanRefineInputProps {
@@ -74,25 +75,25 @@ export function PlanRefineInput({ mode, onSubmit, onCancel }: PlanRefineInputPro
     mode === "approve"
       ? {
           title: "approving — any last instructions?",
-          icon: "📋",
-          accent: "#67e8f9",
+          icon: "◇",
+          accent: COLOR.primary,
         }
       : mode === "checkpoint-revise"
         ? {
             title: "revising — what should change before the next step?",
-            icon: "✏",
-            accent: "#fbbf24",
+            icon: "✎",
+            accent: COLOR.warn,
           }
         : mode === "choice-custom"
           ? {
               title: "custom answer — type whatever fits",
-              icon: "🔀",
-              accent: "#f0abfc",
+              icon: "⌥",
+              accent: COLOR.accent,
             }
           : {
               title: "refining — what should the model change?",
-              icon: "✏",
-              accent: "#fbbf24",
+              icon: "✎",
+              accent: COLOR.warn,
             };
   const hint =
     mode === "approve"

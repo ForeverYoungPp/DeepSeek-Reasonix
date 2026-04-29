@@ -782,10 +782,14 @@ describe("handleSlash", () => {
       pendingEditCount: 3,
     });
     expect(r.info).toMatch(/model\s+deepseek-/);
-    expect(r.info).toMatch(/ctx\s+\d+\.?\d*K?\/\d+K/);
+    // ctx row now includes a tiny [██░░░░] char bar between the label
+    // and the count — match the count itself loosely.
+    expect(r.info).toMatch(/ctx\s+\S+\s+\d+\.?\d*K?\/\d+K/);
     expect(r.info).toMatch(/mcp\s+2 server\(s\)/);
     expect(r.info).toMatch(/session.*\(ephemeral|session\s+"/);
     expect(r.info).toMatch(/edits\s+3 pending/);
+    // /status now also surfaces cost/turns
+    expect(r.info).toMatch(/cost\s+\$/);
   });
 
   it("/context breaks down tokens across system / tools / log, and flags the heaviest tool results", () => {
@@ -813,19 +817,27 @@ describe("handleSlash", () => {
     loop.log.append({ role: "user", content: "now read package.json" });
 
     const r = handleSlash("context", [], loop);
-    expect(r.info).toMatch(/Next-request estimate/);
-    expect(r.info).toMatch(/system prompt/);
-    expect(r.info).toMatch(/tool specs/);
-    expect(r.info).toMatch(/log \(all turns\)/);
+    // /context now returns a structured `ctxBreakdown` payload that
+    // EventLog renders as a 4-color stacked char-bar; `info` is just
+    // a fallback one-liner. Assert on the structure.
+    expect(r.ctxBreakdown).toBeDefined();
+    expect(r.ctxBreakdown!.systemTokens).toBeGreaterThan(0);
+    expect(r.ctxBreakdown!.toolsCount).toBeGreaterThanOrEqual(0);
+    expect(r.ctxBreakdown!.logMessages).toBeGreaterThan(0);
     // Heaviest-tool section must surface the list_directory result.
-    expect(r.info).toMatch(/Top tool results/);
-    expect(r.info).toMatch(/list_directory/);
+    const top = r.ctxBreakdown!.topTools;
+    expect(top.length).toBeGreaterThan(0);
+    expect(top[0]!.name).toBe("list_directory");
+    // The fallback info summary still has the basic shape.
+    expect(r.info).toMatch(/context:/);
+    expect(r.info).toMatch(/system/);
   });
 
   it("/context handles an empty log without crashing", () => {
     const r = handleSlash("context", [], makeLoop());
-    expect(r.info).toMatch(/Next-request estimate/);
-    expect(r.info).not.toMatch(/Top tool results/);
+    expect(r.ctxBreakdown).toBeDefined();
+    expect(r.ctxBreakdown!.topTools).toEqual([]);
+    expect(r.info).toMatch(/context:/);
   });
 
   it("/status with pendingEditCount=0 hides the edits line", () => {

@@ -121,6 +121,146 @@ function countLines(s: string): number {
   return (s.match(/\n/g)?.length ?? 0) + 1;
 }
 
+/**
+ * One row of a side-by-side diff. `left` is the old/before column,
+ * `right` is the new/after column. `kind` drives color + glyph in
+ * the renderer.
+ */
+export interface SplitDiffRow {
+  left: { num: number | null; text: string; kind: "ctx" | "del" | "pad" };
+  right: { num: number | null; text: string; kind: "ctx" | "add" | "pad" };
+}
+
+export interface SplitDiffOptions extends DiffPreviewOptions {
+  /** Starting 1-based line number for the old side. Default 1. */
+  startLine?: number;
+}
+
+/**
+ * Side-by-side diff rows for an EditBlock — git-difftool / delta-style
+ * "old | new" layout. Each removed line pairs with the corresponding
+ * added line at the same offset; unpaired remainders pad with blanks
+ * on the missing side. Common leading/trailing context shows the same
+ * line on both sides.
+ *
+ * Why pair rather than fully Myers-aligned: Myers needs an O(N²) edit
+ * graph to compute LCS for arbitrary text. The SEARCH/REPLACE shape
+ * here is small (typically <30 lines per block) and the fix usually
+ * REPLACES a contiguous span — pairing by index gets the visually-
+ * correct result for the 95% case without the algorithm cost.
+ */
+export function formatEditBlockSplit(
+  block: EditBlock,
+  opts: SplitDiffOptions = {},
+): SplitDiffRow[] {
+  const contextLines = Math.max(0, opts.contextLines ?? 2);
+  const maxLines = Math.max(4, opts.maxLines ?? 40);
+  const startLine = opts.startLine ?? 1;
+
+  const search = block.search === "" ? [] : block.search.split("\n");
+  const replace = block.replace.split("\n");
+
+  // New-file case: empty old column, every replace line on the right.
+  if (search.length === 0) {
+    const rows: SplitDiffRow[] = [];
+    let n = startLine;
+    for (const l of replace) {
+      rows.push({
+        left: { num: null, text: "", kind: "pad" },
+        right: { num: n++, text: l, kind: "add" },
+      });
+    }
+    return capRows(rows, maxLines);
+  }
+
+  // Trim shared leading + trailing context — same logic as the
+  // unified diff renderer, kept in lockstep so both stay accurate.
+  let leading = 0;
+  while (
+    leading < search.length &&
+    leading < replace.length &&
+    search[leading] === replace[leading]
+  ) {
+    leading++;
+  }
+  let trailing = 0;
+  while (
+    trailing < search.length - leading &&
+    trailing < replace.length - leading &&
+    search[search.length - 1 - trailing] === replace[replace.length - 1 - trailing]
+  ) {
+    trailing++;
+  }
+
+  const searchMiddle = search.slice(leading, search.length - trailing);
+  const replaceMiddle = replace.slice(leading, replace.length - trailing);
+  const leadStartIdx = Math.max(0, leading - contextLines);
+  const leadShown = search.slice(leadStartIdx, leading);
+  const trailShown = search.slice(
+    search.length - trailing,
+    search.length - trailing + contextLines,
+  );
+
+  const rows: SplitDiffRow[] = [];
+  let leftNum = startLine + leadStartIdx;
+  let rightNum = startLine + leadStartIdx;
+
+  // Leading context — identical on both sides.
+  for (const l of leadShown) {
+    rows.push({
+      left: { num: leftNum++, text: l, kind: "ctx" },
+      right: { num: rightNum++, text: l, kind: "ctx" },
+    });
+  }
+
+  // Paired removed/added rows (up to min length).
+  const pairedCount = Math.min(searchMiddle.length, replaceMiddle.length);
+  for (let i = 0; i < pairedCount; i++) {
+    rows.push({
+      left: { num: leftNum++, text: searchMiddle[i]!, kind: "del" },
+      right: { num: rightNum++, text: replaceMiddle[i]!, kind: "add" },
+    });
+  }
+  // Extra removed lines (more old than new) — left only.
+  for (let i = pairedCount; i < searchMiddle.length; i++) {
+    rows.push({
+      left: { num: leftNum++, text: searchMiddle[i]!, kind: "del" },
+      right: { num: null, text: "", kind: "pad" },
+    });
+  }
+  // Extra added lines (more new than old) — right only.
+  for (let i = pairedCount; i < replaceMiddle.length; i++) {
+    rows.push({
+      left: { num: null, text: "", kind: "pad" },
+      right: { num: rightNum++, text: replaceMiddle[i]!, kind: "add" },
+    });
+  }
+
+  // Trailing context — identical on both sides.
+  for (const l of trailShown) {
+    rows.push({
+      left: { num: leftNum++, text: l, kind: "ctx" },
+      right: { num: rightNum++, text: l, kind: "ctx" },
+    });
+  }
+
+  return capRows(rows, maxLines);
+}
+
+function capRows(rows: SplitDiffRow[], maxRows: number): SplitDiffRow[] {
+  if (rows.length <= maxRows) return rows;
+  const head = rows.slice(0, maxRows - 1);
+  const hidden = rows.length - head.length;
+  // Replace the trailing slot with a "more lines hidden" marker row,
+  // rendered as a pad on both sides with a special text so the
+  // renderer can pick it up.
+  head.push({
+    left: { num: null, text: `… (${hidden} more lines)`, kind: "pad" },
+    right: { num: null, text: "", kind: "pad" },
+  });
+  return head;
+}
+
 function renderAllPlus(lines: string[], indent: string, maxLines: number): string[] {
   const out = lines.map((l) => `${indent}+ ${l}`);
   return capLines(out, maxLines, indent);

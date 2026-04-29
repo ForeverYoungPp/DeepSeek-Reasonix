@@ -1,4 +1,12 @@
 import type { EditMode } from "../../../../config.js";
+import {
+  createCheckpoint,
+  deleteCheckpoint,
+  findCheckpoint,
+  fmtAgo,
+  listCheckpoints,
+  restoreCheckpoint,
+} from "../../../../code/checkpoints.js";
 import { parseEditIndices } from "../../edit-history.js";
 import type { SlashHandler } from "../dispatch.js";
 import { runGitCommit, stripOuterQuotes } from "../helpers.js";
@@ -167,6 +175,133 @@ const walk: SlashHandler = (_args, _loop, ctx) => {
   return { info: ctx.startWalkthrough() };
 };
 
+/**
+ * `/checkpoint [name]` — snapshot every file the session has touched
+ * (or recently queued an edit against) to a Reasonix-internal store.
+ * Survives `reasonix code` exiting; restore later with `/restore`.
+ *
+ * Sub-commands:
+ *   /checkpoint                     → list (same as /checkpoint list)
+ *   /checkpoint <name>              → save a new checkpoint named <name>
+ *   /checkpoint list                → enumerate stored snapshots
+ *   /checkpoint forget <id|name>    → delete one
+ *
+ * Why this and not git auto-commit: doesn't pollute the user's git
+ * history, works in non-git directories, doesn't fight with hooks /
+ * branch state. See `feedback_internal_checkpoints_over_git.md` for
+ * the full rationale.
+ */
+const checkpoint: SlashHandler = (args, _loop, ctx) => {
+  if (!ctx.codeRoot || !ctx.touchedFiles) {
+    return {
+      info: "/checkpoint is only available inside `reasonix code` — chat mode doesn't apply edits.",
+    };
+  }
+  const sub = (args[0] ?? "").toLowerCase();
+  const rest = args.slice(1).join(" ").trim();
+
+  if (sub === "" || sub === "list") {
+    const items = [...listCheckpoints(ctx.codeRoot)].reverse();
+    if (items.length === 0) {
+      return {
+        info:
+          "no checkpoints yet — `/checkpoint <name>` snapshots every file the session has touched. Restore later with `/restore <name>`.",
+      };
+    }
+    const lines = [`◈ checkpoints · ${items.length} stored`, ""];
+    for (const m of items) {
+      const sizeKb = (m.bytes / 1024).toFixed(1);
+      const tag = m.source === "manual" ? "" : ` (${m.source})`;
+      lines.push(
+        `  ${m.id}  ${fmtAgo(m.createdAt).padEnd(8)}  ${m.name}${tag}  ·  ${m.fileCount} file${m.fileCount === 1 ? "" : "s"}, ${sizeKb} KB`,
+      );
+    }
+    lines.push("");
+    lines.push("  /restore <name|id> · /checkpoint forget <id> · /checkpoint <name> to add");
+    return { info: lines.join("\n") };
+  }
+
+  if (sub === "forget" || sub === "rm" || sub === "delete") {
+    if (!rest) return { info: "usage: /checkpoint forget <id|name>" };
+    const found = findCheckpoint(ctx.codeRoot, rest);
+    if (!found) return { info: `▸ no checkpoint matching "${rest}" — see /checkpoint list` };
+    const ok = deleteCheckpoint(ctx.codeRoot, found.id);
+    return {
+      info: ok
+        ? `▸ deleted checkpoint ${found.id} (${found.name})`
+        : `▸ failed to delete ${found.id} (already gone?)`,
+    };
+  }
+
+  // `/checkpoint <name>` (any free-form name) → save
+  const name = args.join(" ").trim();
+  if (!name) {
+    return {
+      info: "usage: /checkpoint <name>   (or /checkpoint list to see existing)",
+    };
+  }
+  const paths = ctx.touchedFiles();
+  const meta = createCheckpoint({
+    rootDir: ctx.codeRoot,
+    name,
+    paths,
+    source: "manual",
+  });
+  if (paths.length === 0) {
+    return {
+      info: `▸ checkpoint "${name}" saved (${meta.id}) — but no files have been touched yet, so it's an empty baseline. Edits made after this point will be revertable.`,
+    };
+  }
+  return {
+    info: `▸ checkpoint "${name}" saved (${meta.id}) — ${meta.fileCount} file${meta.fileCount === 1 ? "" : "s"}, ${(meta.bytes / 1024).toFixed(1)} KB. Restore: /restore ${name}`,
+  };
+};
+
+/**
+ * `/restore <id|name>` — write a checkpoint's files back to disk.
+ * Files that didn't exist at snapshot time get deleted. Files that
+ * weren't in the snapshot are left untouched (the snapshot is
+ * declarative for what it captured, not for the whole project).
+ *
+ * Doesn't touch the model's edit history or pending-edit queue —
+ * `/undo` is for in-session reverts, `/restore` for cross-session.
+ */
+const restore: SlashHandler = (args, _loop, ctx) => {
+  if (!ctx.codeRoot) {
+    return {
+      info: "/restore is only available inside `reasonix code`.",
+    };
+  }
+  const target = args.join(" ").trim();
+  if (!target) {
+    return {
+      info: "usage: /restore <name|id>   (see /checkpoint list for ids)",
+    };
+  }
+  const found = findCheckpoint(ctx.codeRoot, target);
+  if (!found) {
+    return { info: `▸ no checkpoint matching "${target}" — try /checkpoint list` };
+  }
+  const result = restoreCheckpoint(ctx.codeRoot, found.id);
+  const lines = [`▸ restored "${found.name}" (${found.id}) from ${fmtAgo(found.createdAt)}`];
+  if (result.restored.length > 0) {
+    lines.push(`  · wrote back ${result.restored.length} file${result.restored.length === 1 ? "" : "s"}`);
+  }
+  if (result.removed.length > 0) {
+    lines.push(`  · removed ${result.removed.length} file${result.removed.length === 1 ? "" : "s"} (didn't exist at checkpoint time)`);
+  }
+  if (result.skipped.length > 0) {
+    lines.push(`  ✗ ${result.skipped.length} file${result.skipped.length === 1 ? "" : "s"} skipped:`);
+    for (const s of result.skipped.slice(0, 5)) {
+      lines.push(`    ${s.path} — ${s.reason}`);
+    }
+    if (result.skipped.length > 5) {
+      lines.push(`    … ${result.skipped.length - 5} more`);
+    }
+  }
+  return { info: lines.join("\n") };
+};
+
 export const handlers: Record<string, SlashHandler> = {
   undo,
   history,
@@ -179,4 +314,6 @@ export const handlers: Record<string, SlashHandler> = {
   mode,
   commit,
   walk,
+  checkpoint,
+  restore,
 };

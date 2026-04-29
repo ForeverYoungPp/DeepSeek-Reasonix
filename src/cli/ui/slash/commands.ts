@@ -104,6 +104,13 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary:
       "cross-session cost dashboard (today / week / month / all-time · cache hit · vs Claude)",
   },
+  {
+    cmd: "mouse",
+    argsHint: "[on|off]",
+    summary:
+      "toggle terminal mouse tracking · off by default (lets shift-drag copy work) · on enables wheel-scroll for log",
+    argCompleter: ["on", "off"],
+  },
   { cmd: "think", summary: "dump the last turn's full R1 reasoning (reasoner only)" },
   {
     cmd: "context",
@@ -187,6 +194,20 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     cmd: "commit",
     argsHint: '"msg"',
     summary: "git add -A && git commit -m ...",
+    contextual: "code",
+  },
+  {
+    cmd: "checkpoint",
+    argsHint: "[name|list|forget <id>]",
+    summary:
+      "snapshot every file the session has touched (Cursor-style internal store, not git). /checkpoint alone lists.",
+    contextual: "code",
+    argCompleter: ["list", "forget"],
+  },
+  {
+    cmd: "restore",
+    argsHint: "<name|id>",
+    summary: "roll back files to a named checkpoint (see /checkpoint list)",
     contextual: "code",
   },
   {

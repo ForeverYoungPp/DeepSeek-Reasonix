@@ -21,6 +21,22 @@ export interface SlashResult {
    */
   resubmit?: string;
   /**
+   * Structured payload for `/context` — pushed as a `ctx-breakdown`
+   * DisplayEvent so EventLog can render the 4-color stacked bar via
+   * proper Box+Text segments. Plain `info` text can't carry per-segment
+   * color, so this is the structured route.
+   */
+  ctxBreakdown?: {
+    systemTokens: number;
+    toolsTokens: number;
+    logTokens: number;
+    inputTokens: number;
+    ctxMax: number;
+    toolsCount: number;
+    logMessages: number;
+    topTools: Array<{ name: string; tokens: number; turn: number }>;
+  };
+  /**
    * Render an archived plan as a read-only "Time Travel" block in
    * scrollback. Populated by `/replay [N]`. The TUI mounts it as a
    * `plan-replay` DisplayEvent so the same step-list / risk gutter
@@ -139,6 +155,14 @@ export interface SlashContext {
    * also persist the choice to config and echo the change in historical.
    */
   setEditMode?: (mode: EditMode) => void;
+  /**
+   * Repo-relative paths the session has touched so far (edit history +
+   * pending-edit blocks, deduped). Used by `/checkpoint` to capture
+   * "the surface area I might want to roll back later" without snapshotting
+   * the whole project. Absent in chat mode → `/checkpoint` replies "not
+   * available outside code mode".
+   */
+  touchedFiles?: () => string[];
   /**
    * Background-process registry backing /jobs / /kill / /logs. Present
    * iff the session is a `reasonix code` run. Slash handlers expect

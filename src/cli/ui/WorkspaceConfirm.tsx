@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import React from "react";
 import { ModalCard } from "./ModalCard.js";
 import { SingleSelect } from "./Select.js";
+import { COLOR } from "./theme.js";
 
 export type WorkspaceConfirmChoice = "switch" | "deny";
 
@@ -33,15 +34,15 @@ export function WorkspaceConfirm({
       ? `MCP servers (${mcpServerCount}) stay anchored to the original launch root.`
       : "Re-registers filesystem / shell / memory tools at the new path.";
   return (
-    <ModalCard accent="#f59e0b" icon="⇄" title="switch workspace" subtitle={subtitle}>
+    <ModalCard accent={COLOR.warn} icon="⇄" title="switch workspace" subtitle={subtitle}>
       <Box flexDirection="column" marginBottom={1}>
         <Box>
-          <Text dimColor>{"from "}</Text>
-          <Text color="#a3a3a3">{currentRoot}</Text>
+          <Text dimColor>{"from  "}</Text>
+          <Text color={COLOR.info}>{currentRoot}</Text>
         </Box>
         <Box>
-          <Text dimColor>{"to   "}</Text>
-          <Text color="#67e8f9" bold>
+          <Text dimColor>{"to    "}</Text>
+          <Text color={COLOR.primary} bold>
             {path}
           </Text>
         </Box>
@@ -62,7 +63,7 @@ export function WorkspaceConfirm({
         ]}
         onSubmit={(v) => onChoose(v as WorkspaceConfirmChoice)}
         onCancel={() => onChoose("deny")}
-        footer="[↑↓] navigate  ·  [Enter] select  ·  [Esc] deny"
+        footer="↑↓ navigate · ⏎ select · esc deny"
       />
     </ModalCard>
   );

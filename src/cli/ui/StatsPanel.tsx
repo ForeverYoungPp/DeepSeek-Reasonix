@@ -1,4 +1,5 @@
 import { Box, Text, useStdout } from "ink";
+import { basename } from "node:path";
 import React from "react";
 import type { EditMode } from "../../config.js";
 import { DEEPSEEK_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS } from "../../telemetry.js";
@@ -112,16 +113,6 @@ export interface StatsPanelProps {
    */
   escalated?: boolean;
   /**
-   * Live URL of the embedded web dashboard, or null when the server
-   * isn't running. Renders as a dedicated row below the header with
-   * a one-line description of what the dashboard offers — without
-   * that explanation users see "↗ http://..." and have no idea what
-   * clicking it does. URL is wrapped in an OSC 8 hyperlink so modern
-   * terminals make it Cmd/Ctrl-clickable; older ones just show the
-   * bare URL, which is still copy-pasteable.
-   */
-  dashboardUrl?: string | null;
-  /**
    * Active session USD budget cap, or `null` when the user hasn't set
    * one. When present the panel renders a `$X.XX / $Y.YY (Z%)` row
    * that turns amber past 80% and red past 100% — the same thresholds
@@ -129,6 +120,19 @@ export interface StatsPanelProps {
    * (no-cap) install doesn't have a confusing "no budget" line.
    */
   budgetUsd?: number | null;
+  /**
+   * Workspace root directory. The chrome surfaces just the basename
+   * (project folder name) — full paths waste status-row real estate
+   * and the user already knows where they ran `reasonix code`. Absent
+   * outside `reasonix code` (chat mode renders without a project crumb).
+   */
+  rootDir?: string;
+  /**
+   * Active session name (e.g. "code-myproject"). Shown alongside the
+   * project crumb so users with multiple sessions per project can tell
+   * them apart at a glance. Absent → ephemeral session, no crumb shown.
+   */
+  sessionName?: string | null;
 }
 
 /**
@@ -162,8 +166,9 @@ export function StatsPanel({
   busy,
   proArmed,
   escalated,
-  dashboardUrl,
   budgetUsd,
+  rootDir,
+  sessionName,
 }: StatsPanelProps) {
   const branchOn = (branchBudget ?? 1) > 1;
   const ctxMax = DEEPSEEK_CONTEXT_TOKENS[model] ?? DEFAULT_CONTEXT_TOKENS;
@@ -177,56 +182,202 @@ export function StatsPanel({
   // actually had a chance to build, we flip to the live gradient.
   const coldStart = summary.turns <= COLD_START_TURNS;
 
-  // No gradient bars, no animation. Earlier versions had truecolor
-  // gradient rules top+bottom and a tick-driven wordmark/bar flow,
-  // but those are exactly the elements Ink's eraseLines miscounts
-  // on resize: ~100-char gradient strings wrap 2-3 visual rows at
-  // narrow widths, the per-tick re-render writes new frames before
-  // the stale rows are erased, and ghost panels stack vertically
-  // (the user-reported "刷屏" / multi-frame artifact). Fixed-row
-  // panel + no per-tick churn keeps Ink's row math honest.
+  // Top status header — exactly one row, with brand wordmark + project
+  // crumb on the LEFT and pills (mode / cost / cache) right-aligned via
+  // a flex spacer. A faint horizontal rule below separates the chrome
+  // from the conversation log so the eye reads it as a header bar, not
+  // another log entry. Matches design/tui-redesign-ink.html topbar.
+  //
+  // Removed from the persistent panel (now via /status slash on demand):
+  //   · model name, harvest / branch / effort flags
+  //   · ctx pill (still in /status; chrome shows budget/cache only)
+  //   · turn counter, update nudge, dashboard URL
+  // Showing all of those every frame burned vertical space the
+  // conversation needed.
   return (
-    <Box flexDirection="column" paddingX={1} marginBottom={1}>
-      <Header
-        model={model}
-        prefixHash={prefixHash}
-        harvestOn={harvestOn}
-        branchOn={branchOn}
-        branchBudget={branchBudget ?? 1}
-        reasoningEffort={reasoningEffort}
-        planMode={planMode}
+    <Box flexDirection="column" paddingX={1}>
+      <ChromeRow
         editMode={editMode}
-        turns={summary.turns}
-        updateAvailable={updateAvailable}
-        narrow={narrow}
-        busy={busy ?? false}
+        planMode={planMode}
         proArmed={proArmed ?? false}
         escalated={escalated ?? false}
-        animate={false}
+        summary={summary}
+        coldStart={coldStart}
+        rootDir={rootDir}
+        sessionName={sessionName ?? null}
+        updateAvailable={updateAvailable}
+        balance={balance ?? null}
+        narrow={narrow}
       />
-      {dashboardUrl ? <DashboardRow url={dashboardUrl} narrow={narrow} /> : null}
-      {narrow ? (
-        <StackedMetrics
-          summary={summary}
-          ctxRatio={ctxRatio}
-          ctxMax={ctxMax}
-          balance={balance}
-          coldStart={coldStart}
-        />
-      ) : (
-        <InlineMetrics
-          summary={summary}
-          ctxRatio={ctxRatio}
-          ctxMax={ctxMax}
-          balance={balance}
-          coldStart={coldStart}
-        />
-      )}
+      <ChromeRule />
       {budgetUsd !== null && budgetUsd !== undefined ? (
         <BudgetRow spent={summary.totalCostUsd} cap={budgetUsd} />
       ) : null}
     </Box>
   );
+}
+
+/** Faint horizontal rule under the chrome. Visually separates the
+ *  status header from the conversation log so the eye treats the row
+ *  above as chrome, not as another log entry. */
+function ChromeRule() {
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const w = Math.max(20, cols - 2);
+  return (
+    <Text dimColor>{"─".repeat(w)}</Text>
+  );
+}
+
+/**
+ * Single-row chrome: `◈ reasonix · <project> › <session>` on the left,
+ * pills `[mode]  [cost]  [cache <bar> N%]` right-aligned via a flex
+ * spacer. Narrow terminals collapse the project crumb to just the
+ * basename + drop the session.
+ */
+function ChromeRow({
+  editMode,
+  planMode,
+  proArmed,
+  escalated,
+  summary,
+  coldStart,
+  rootDir,
+  sessionName,
+  updateAvailable,
+  balance,
+  narrow,
+}: {
+  editMode?: EditMode;
+  planMode?: boolean;
+  proArmed: boolean;
+  escalated: boolean;
+  summary: SessionSummary;
+  coldStart: boolean;
+  rootDir?: string;
+  sessionName?: string | null;
+  updateAvailable?: string | null;
+  balance?: { currency: string; total: number } | null;
+  narrow: boolean;
+}) {
+  const modePill = pickModePill(planMode, editMode);
+  const proPill = escalated
+    ? { label: "⇧ pro", color: COLOR.err }
+    : proArmed
+      ? { label: "⇧ pro", color: COLOR.warn }
+      : null;
+  const projectName = rootDir ? basename(rootDir) : null;
+  const cachePct = Math.round(summary.cacheHitRatio * 100);
+  const cacheColor =
+    summary.cacheHitRatio >= 0.7 ? COLOR.ok : summary.cacheHitRatio >= 0.4 ? COLOR.warn : COLOR.err;
+
+  return (
+    <Box>
+      {/* LEFT: brand wordmark + project crumb */}
+      <Text bold color={GRADIENT[0]}>
+        {"◈ "}
+      </Text>
+      <Text color={COLOR.brand} bold>
+        reasonix
+      </Text>
+      {projectName ? (
+        <>
+          <Text color={COLOR.info} dimColor>
+            {"  ·  "}
+          </Text>
+          <Text>{projectName}</Text>
+          {!narrow && sessionName ? (
+            <>
+              <Text color={COLOR.info} dimColor>
+                {"  ›  "}
+              </Text>
+              <Text color={COLOR.info}>{sessionName}</Text>
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* SPACER pushes pills to the right edge */}
+      <Box flexGrow={1} />
+
+      {/* RIGHT: pills */}
+      {updateAvailable ? (
+        <>
+          <Text color={COLOR.warn} bold>
+            {`↑ ${updateAvailable}`}
+          </Text>
+          <Text>{"  "}</Text>
+        </>
+      ) : null}
+      {modePill ? (
+        <>
+          <Text color={modePill.color} bold>
+            {`[${modePill.label}]`}
+          </Text>
+          <Text>{"  "}</Text>
+        </>
+      ) : null}
+      {proPill ? (
+        <>
+          <Text color={proPill.color} bold>
+            {`[${proPill.label}]`}
+          </Text>
+          <Text>{"  "}</Text>
+        </>
+      ) : null}
+      {/* Cost — always shown. */}
+      <Text
+        color={
+          summary.turns === 0 || coldStart
+            ? COLOR.info
+            : sessionCostColor(summary.totalCostUsd)
+        }
+        bold={summary.turns > 0 && !coldStart}
+        dimColor={summary.turns === 0 || coldStart}
+      >
+        {`[$${summary.totalCostUsd.toFixed(4)}]`}
+      </Text>
+      {/* Balance pill — wallet remaining at the API. Threshold colors:
+          red <1, amber <5, ok ≥5. Drops first when the chrome
+          overflows since the user can hit /status for the same data. */}
+      {balance && !narrow ? (
+        <>
+          <Text>{"  "}</Text>
+          <Text
+            color={
+              balance.total < 1 ? COLOR.err : balance.total < 5 ? COLOR.warn : COLOR.ok
+            }
+          >
+            {`[w ${balance.currency === "USD" ? "$" : ""}${balance.total.toFixed(2)}${balance.currency !== "USD" ? ` ${balance.currency}` : ""}]`}
+          </Text>
+        </>
+      ) : null}
+      {summary.turns > 3 && !narrow ? (
+        <>
+          <Text>{"  "}</Text>
+          <Text dimColor>{"["}</Text>
+          <Text dimColor>{"c "}</Text>
+          <Bar ratio={summary.cacheHitRatio} color={cacheColor} cells={6} />
+          <Text> </Text>
+          <Text color={cacheColor}>{`${cachePct}%`}</Text>
+          <Text dimColor>{"]"}</Text>
+        </>
+      ) : null}
+    </Box>
+  );
+}
+
+
+/** Map (planMode, editMode) → mode pill. PLAN trumps everything. */
+function pickModePill(
+  planMode: boolean | undefined,
+  editMode: EditMode | undefined,
+): { label: string; color: string } | null {
+  if (planMode) return { label: "PLAN", color: COLOR.err };
+  if (editMode === "yolo") return { label: "yolo", color: COLOR.err };
+  if (editMode === "auto") return { label: "auto", color: COLOR.primary };
+  if (editMode === "review") return { label: "review", color: COLOR.info };
+  return null;
 }
 
 /**
@@ -359,57 +510,6 @@ function Header({
       </Text>
     </Box>
   );
-}
-
-/**
- * Dedicated rows for the web dashboard. The URL gets its own line so
- * Ink's width measurement doesn't have to count the embedded OSC 8
- * escape against any neighboring text — earlier single-line layouts
- * had the URL and description fighting for space and the description
- * wrapped through the middle of the URL on terminals that hide the
- * hyperlink escape.
- *
- *   ◇ web   open the dashboard in a browser (chat · files · stats · settings)
- *           http://127.0.0.1:NNNN/?token=…
- *
- * The URL is wrapped in an OSC 8 hyperlink so iTerm2 / WezTerm /
- * Windows Terminal / VS Code / recent gnome-terminal make it
- * Cmd/Ctrl-clickable. Older terminals show the raw URL (still
- * copy-pasteable). Most terminals also auto-detect bare URLs anyway.
- */
-function DashboardRow({ url, narrow }: { url: string; narrow: boolean }) {
-  return (
-    <Box flexDirection="column" marginTop={narrow ? 0 : 1}>
-      <Box>
-        <Text color={COLOR.info}>{"◇ web   "}</Text>
-        <Text dimColor>{"open the dashboard in a browser (chat · files · stats · settings)"}</Text>
-      </Box>
-      <Box>
-        {/* Match the "◇ web   " prefix width (8 cells) so the URL hangs
-            visually under the description. Indent is a string of spaces
-            because Ink's `paddingLeft` interacts oddly with parent
-            Box widths in some terminals. */}
-        <Text>{"        "}</Text>
-        <Text color="cyan" bold>
-          {hyperlink(url, url)}
-        </Text>
-      </Box>
-    </Box>
-  );
-}
-
-/**
- * Wrap text in an OSC 8 hyperlink escape — modern terminals (iTerm2,
- * WezTerm, Windows Terminal, VS Code, recent gnome-terminal) render
- * the text underlined and make it Cmd/Ctrl-clickable. Older or strict
- * terminals strip the escape and just show the bare text. Either way,
- * the URL is also visible on first launch via the `▸ dashboard ready`
- * info row, so click-or-copy both work.
- */
-function hyperlink(url: string, label: string): string {
-  const ESC = "\u001b";
-  const ST = `${ESC}\\`;
-  return `${ESC}]8;;${url}${ST}${label}${ESC}]8;;${ST}`;
 }
 
 /** Solid-background tag, used for primary mode + pro indicators. */

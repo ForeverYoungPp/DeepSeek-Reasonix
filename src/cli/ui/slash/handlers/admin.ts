@@ -10,6 +10,7 @@ import {
 import { aggregateUsage, defaultUsageLogPath, readUsageLog } from "../../../../usage.js";
 import { VERSION, compareVersions, isNpxInstall } from "../../../../version.js";
 import { renderDashboard } from "../../../commands/stats.js";
+import { isMouseTrackingOn, setMouseTracking } from "../../alt-screen.js";
 import type { SlashHandler } from "../dispatch.js";
 
 const hooks: SlashHandler = (args, loop, ctx) => {
@@ -211,10 +212,41 @@ const cwd: SlashHandler = (args, _loop, ctx) => {
   return { info: lines.join("\n") };
 };
 
+/**
+ * `/mouse [on|off]` — toggle terminal mouse-event tracking. OFF by
+ * default so the user can shift+drag to select & copy text from the
+ * log. Turn ON for wheel-scroll-to-navigate-history. Bare `/mouse`
+ * reports the current state.
+ */
+const mouse: SlashHandler = (args) => {
+  const arg = (args[0] ?? "").toLowerCase();
+  if (arg === "") {
+    return {
+      info: isMouseTrackingOn()
+        ? "mouse tracking: ON — wheel scrolls log; copy needs Shift+drag to bypass tracking"
+        : "mouse tracking: off (default) — text selection / copy works natively; PgUp/PgDn scroll the log",
+    };
+  }
+  if (arg === "on" || arg === "true" || arg === "1" || arg === "yes") {
+    setMouseTracking(true);
+    return {
+      info: "▸ mouse tracking ON — wheel-up / wheel-down now scroll the log. To copy text, hold Shift while dragging (bypasses tracking).",
+    };
+  }
+  if (arg === "off" || arg === "false" || arg === "0" || arg === "no") {
+    setMouseTracking(false);
+    return {
+      info: "▸ mouse tracking off — text selection works natively; use PgUp / PgDn / Home / End to scroll.",
+    };
+  }
+  return { info: "usage: /mouse [on|off]   (no arg → status)" };
+};
+
 export const handlers: Record<string, SlashHandler> = {
   hook: hooks,
   hooks,
   cwd,
   update,
   stats,
+  mouse,
 };

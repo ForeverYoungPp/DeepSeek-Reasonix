@@ -85,55 +85,73 @@ const context: SlashHandler = (_args, loop) => {
     }
   }
   const logTokens = userTokens + assistantTokens + toolResultTokens + toolCallTokens;
-  const total = systemTokens + toolsTokens + logTokens;
   const ctxMax = DEEPSEEK_CONTEXT_TOKENS[loop.model] ?? DEFAULT_CONTEXT_TOKENS;
-  const pct = (n: number) => (total > 0 ? `${Math.round((n / total) * 100)}%`.padStart(4) : "  0%");
-  const row = (label: string, n: number, note = "") =>
-    `  ${label.padEnd(20)}${compactNum(n).padStart(8)} tokens ${pct(n)}${note ? `   ${note}` : ""}`;
+  // For /context's "input" segment we count what the user is about to
+  // submit if they hit enter right now. The slash itself runs synchronously
+  // off the prompt buffer, but App.tsx doesn't pass that buffer through —
+  // approximate as 0 here. The breakdown still adds up because system +
+  // tools + log are the big chunks; input is usually <1% pre-send.
+  const inputTokens = 0;
+  const topTools = [...toolBreakdown].sort((a, b) => b.tokens - a.tokens).slice(0, 5);
 
-  const lines = [
-    `Next-request estimate: ~${compactNum(total)} tokens of ${compactNum(ctxMax)} (${Math.round(
-      (total / ctxMax) * 100,
-    )}% of window)`,
-    "",
-    row("system prompt", systemTokens),
-    row("tool specs", toolsTokens, `(${loop.prefix.toolSpecs.length} tools)`),
-    row("log (all turns)", logTokens, `(${entries.length} messages)`),
-    `    user                ${compactNum(userTokens).padStart(8)} tokens`,
-    `    assistant           ${compactNum(assistantTokens).padStart(8)} tokens`,
-    `    tool-call args      ${compactNum(toolCallTokens).padStart(8)} tokens`,
-    `    tool results        ${compactNum(toolResultTokens).padStart(8)} tokens`,
-  ];
-
-  // Top 5 heaviest tool results — usually where unexpected bloat
-  // lives (a big read_file, an unfiltered search_content).
-  if (toolBreakdown.length > 0) {
-    const top = [...toolBreakdown].sort((a, b) => b.tokens - a.tokens).slice(0, 5);
-    lines.push("");
-    lines.push(`Top tool results by cost (of ${toolBreakdown.length} total):`);
-    for (const t of top) {
-      lines.push(
-        `    turn ${String(t.turn).padStart(3)}  ${t.name.padEnd(22)} ${compactNum(t.tokens).padStart(8)} tokens`,
-      );
-    }
-  }
-
-  lines.push("");
-  lines.push(
-    "Count is a local estimate (DeepSeek V3 tokenizer, pure-TS port); server prompt_tokens may add ~3-6% for chat-template role markers.",
-  );
-  return { info: lines.join("\n") };
+  // Structured payload — EventLog renders this as a 4-color stacked
+  // char-bar via Box+Text segments. The `info` field is a fallback
+  // for log replay / dashboards that don't know about the rich form.
+  const total = systemTokens + toolsTokens + logTokens + inputTokens;
+  const winPct = ctxMax > 0 ? Math.round((total / ctxMax) * 100) : 0;
+  const fallbackInfo = `context: ~${compactNum(total)} of ${compactNum(ctxMax)} (${winPct}%) · system ${compactNum(systemTokens)} · tools ${compactNum(toolsTokens)} · log ${compactNum(logTokens)}`;
+  return {
+    info: fallbackInfo,
+    ctxBreakdown: {
+      systemTokens,
+      toolsTokens,
+      logTokens,
+      inputTokens,
+      ctxMax,
+      toolsCount: loop.prefix.toolSpecs.length,
+      logMessages: entries.length,
+      topTools,
+    },
+  };
 };
 
 const status: SlashHandler = (_args, loop, ctx) => {
   const branchBudget = loop.branchOptions.budget ?? 1;
   const ctxMax = DEEPSEEK_CONTEXT_TOKENS[loop.model] ?? DEFAULT_CONTEXT_TOKENS;
-  const lastPromptTokens = loop.stats.summary().lastPromptTokens;
+  const summary = loop.stats.summary();
+  const lastPromptTokens = summary.lastPromptTokens;
   const ctxPct = ctxMax > 0 ? Math.round((lastPromptTokens / ctxMax) * 100) : 0;
+  // 16-cell context bar — narrower than /context's 48 since /status is
+  // a quick glance, not the deep dive. Same `█/░` characters so the
+  // visual grammar stays consistent across slashes.
+  const ctxBar = lastPromptTokens > 0 ? renderTinyBar(ctxPct, 16) : "";
   const ctxLine =
     lastPromptTokens > 0
-      ? `  ctx    ${compactNum(lastPromptTokens)}/${compactNum(ctxMax)} (${ctxPct}%)`
-      : "  ctx    no turns yet";
+      ? `  ctx     ${ctxBar} ${compactNum(lastPromptTokens)}/${compactNum(ctxMax)} (${ctxPct}%)`
+      : "  ctx     no turns yet";
+
+  // Cost / cache hit row — the high-signal numbers from StatsPanel.
+  // Cache pct only shown after the cold-start window so a 0.0% on
+  // turn 1 doesn't read as broken.
+  const cost = summary.totalCostUsd;
+  const cacheLine =
+    summary.turns > 3
+      ? (() => {
+          const cachePct = Math.round(summary.cacheHitRatio * 100);
+          return `  cost    $${cost.toFixed(4)} · cache ${renderTinyBar(cachePct, 12)} ${cachePct}% · turns ${summary.turns}`;
+        })()
+      : `  cost    $${cost.toFixed(4)} · turns ${summary.turns} (cache warming up)`;
+
+  // Budget row — only when a cap is set
+  const budgetLine =
+    typeof loop.budgetUsd === "number"
+      ? (() => {
+          const pct = Math.round((cost / loop.budgetUsd!) * 100);
+          const tag = pct >= 100 ? " ▲ EXHAUSTED" : pct >= 80 ? " ▲ 80%+" : "";
+          return `  budget  $${cost.toFixed(4)} / $${loop.budgetUsd!.toFixed(2)} (${pct}%)${tag}`;
+        })()
+      : "";
+
   const pending = ctx.pendingEditCount ?? 0;
   const sessionLine = loop.sessionName
     ? `  session "${loop.sessionName}" · ${loop.log.length} messages in log (resumed ${loop.resumedMessageCount})`
@@ -152,18 +170,37 @@ const status: SlashHandler = (_args, loop, ctx) => {
         : ctx.editMode === "review"
           ? "  mode    review — edits queue for /apply or y  (Shift+Tab to flip)"
           : "";
+  const dashLine = ctx.getDashboardUrl?.()
+    ? `  dash    ${ctx.getDashboardUrl?.()} (open in browser · /dashboard stop)`
+    : "";
   const lines = [
     `  model   ${loop.model}`,
     `  flags   harvest=${loop.harvestEnabled ? "on" : "off"} · branch=${branchBudget > 1 ? branchBudget : "off"} · stream=${loop.stream ? "on" : "off"} · effort=${loop.reasoningEffort}`,
+    cacheLine,
     ctxLine,
     mcpLine,
     sessionLine,
   ];
+  if (budgetLine) lines.push(budgetLine);
   if (pendingLine) lines.push(pendingLine);
   if (planLine) lines.push(planLine);
   if (modeLine) lines.push(modeLine);
+  if (dashLine) lines.push(dashLine);
   return { info: lines.join("\n") };
 };
+
+/**
+ * Tiny `[██████░░░░] 60%`-style bar for use inside slash text output.
+ * Char-only, no color (info text strings render dimColor in EventLog).
+ * The visual is intentionally subtle — these slashes are scanned for
+ * numbers, not stared at.
+ */
+function renderTinyBar(pct: number, width: number): string {
+  const w = Math.max(4, width);
+  const clamped = Math.max(0, Math.min(100, pct));
+  const filled = Math.round((w * clamped) / 100);
+  return `[${"█".repeat(filled)}${"░".repeat(w - filled)}]`;
+}
 
 const compact: SlashHandler = (args, loop) => {
   // Manual companion to the automatic 60%/80% auto-compact. Re-applies

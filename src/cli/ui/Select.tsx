@@ -12,6 +12,7 @@
 import { Box, Text } from "ink";
 import React, { useState } from "react";
 import { useKeystroke } from "./keystroke-context.js";
+import { COLOR } from "./theme.js";
 
 export interface SelectItem<V extends string = string> {
   /** Stable identifier — returned to caller on submit. */
@@ -166,11 +167,14 @@ function SelectRow<V extends string>({
   active: boolean;
   marker: string;
 }) {
-  const color = item.disabled ? "gray" : active ? "cyan" : undefined;
+  // Color: dim for disabled, primary cyan + bold for active, plain
+  // default for inactive. Keeps the active-row affordance consistent
+  // with the slash + at-mention pickers (▸ + colored text).
+  const color = item.disabled ? COLOR.info : active ? COLOR.primary : undefined;
   return (
     <Box flexDirection="column">
       <Box>
-        <Text color={color}>
+        <Text color={color} bold={active} dimColor={item.disabled}>
           {marker} {item.label}
         </Text>
       </Box>

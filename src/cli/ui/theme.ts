@@ -67,6 +67,64 @@ export const GLYPH = {
   shade1: "░",
   shade2: "▒",
   shade3: "▓",
+
+  // Status icons — checkbox-style states used across plan steps,
+  // job rows, history entries. Pair with the COLOR semantics:
+  // done→ok, cur→primary, pending→info-faint, fail→err.
+  done: "✓",
+  cur: "▸",
+  pending: "○",
+  fail: "✗",
+  running: "●",
+
+  // Tree-drawing chars for hierarchical lists (plan steps, sub-loops,
+  // hook attachments). 1 cell each; render fine in every monospace
+  // font we've tested.
+  branch: "┣",
+  branchEnd: "┗",
+  branchStub: "┃",
+  rule: "─",
+
+  // Spinner frames — 4-step rotation. Cycle every 200ms via setInterval
+  // (Ink's useEffect setState pattern). Equivalent to ink-spinner but
+  // with our own cadence + character set.
+  spinFrames: ["◐", "◓", "◑", "◒"] as readonly string[],
+} as const;
+
+/**
+ * Surface color ramp — 6 steps from canvas (deepest) to selected
+ * (lightest). Use these for stacked layers like top chrome over log
+ * over modal-backdrop. Lifted from the dashboard's app.css so the web
+ * surface and TUI share an identical depth perception (within Ink's
+ * ANSI limits).
+ *
+ * Note: terminals quantize to 256-color or 16-color when truecolor
+ * isn't available, so steps that look distinct in a modern terminal
+ * may collapse to two visible shades on basic xterm. The ordering
+ * stays correct in both — bg-canvas is always darker than bg-sel.
+ */
+export const SURFACE = {
+  canvas: "#070a10",
+  shell: "#0b1019",
+  card: "#101721",
+  elev: "#161f2c",
+  sel: "#1a2433",
+  line: "#1c2433",
+  lineSoft: "#141b27",
+} as const;
+
+/**
+ * Foreground intensity ramp — 5 steps from boldest text to faintest
+ * decoration. Match these against semantic content: `strong` for
+ * headings + active selection labels; `default` for body; `dim` for
+ * meta; `faint` for hints + foot bars; `ghost` for separators.
+ */
+export const FG = {
+  strong: "#e6edf6",
+  default: "#cbd5e1",
+  dim: "#94a3b8",
+  faint: "#64748b",
+  ghost: "#475569",
 } as const;
 
 /**

@@ -4,6 +4,7 @@ import React from "react";
 import type { ApplyResult } from "../../code/edit-blocks.js";
 import type { EditMode } from "../../config.js";
 import type { JobRegistry } from "../../tools/jobs.js";
+import { CharBar } from "./char-bar.js";
 import { useElapsedSeconds, useSlowTick, useTick } from "./ticker.js";
 
 export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -126,10 +127,16 @@ function ModeBarFrame({ children }: { children: React.ReactNode }) {
 
 /**
  * Solid-background mode badge so the bottom status bar reads at a
- * glance like a real editor's modeline (vim/helix style) instead of a
- * dim text label that blends into the prompt above. `flash` inverts
- * briefly after a mode flip — the existing modeFlash signal — for a
- * "yes, it changed" acknowledgement.
+ * glance — bracket-text style matching the StatsPanel chrome at top
+ * (one canonical pill style across the whole TUI). `flash` inverts
+ * briefly after a mode flip so the user sees "yes, it changed"; once
+ * the flash fades it returns to its quiet bracket form.
+ *
+ * Why bracket and not solid bg: the mode is already shown in the top
+ * chrome's pill. Repeating the same info as a loud, padded block
+ * directly above the prompt was visual repetition, not reinforcement.
+ * Bracket here keeps the actionable hint readable while the flash
+ * still does its acknowledgement job.
  */
 function ModePill({
   label,
@@ -141,8 +148,8 @@ function ModePill({
   flash: boolean;
 }) {
   return (
-    <Text backgroundColor={bg} color="white" bold inverse={flash}>
-      {` ${label} `}
+    <Text color={bg} bold inverse={flash}>
+      {`[${label}]`}
     </Text>
   );
 }
@@ -160,12 +167,19 @@ export function UndoBanner({
 }: {
   banner: { results: ApplyResult[]; expiresAt: number };
 }) {
-  useSlowTick();
+  // Fast tick so the char bar shrinks one cell at a time rather than
+  // jumping in 1s gulps. With FAST_TICK_MS=120 we get ~42 frames over
+  // a 5s window — smooth enough that the bar reads as a continuous
+  // countdown without looking like a stutter.
+  useTick();
+  const totalMs = 5000; // mirrors armUndoBanner's hard-coded window
   const remainingMs = Math.max(0, banner.expiresAt - Date.now());
   const remainingSec = Math.ceil(remainingMs / 1000);
   const ok = banner.results.filter((r) => r.status === "applied" || r.status === "created").length;
   const total = banner.results.length;
   const urgent = remainingSec <= 1;
+  // 20-cell bar, 4 cells per second. Filled = remaining time.
+  const pct = (remainingMs / totalMs) * 100;
   return (
     <Box marginY={1} paddingX={1}>
       <Text backgroundColor="#c4b5fd" color="black" bold>
@@ -175,7 +189,14 @@ export function UndoBanner({
       <Text backgroundColor="#67e8f9" color="black" bold>
         {" u "}
       </Text>
-      <Text dimColor>{" to undo   "}</Text>
+      <Text dimColor>{" to undo  "}</Text>
+      <CharBar
+        pct={pct}
+        width={20}
+        color={urgent ? "#f87171" : "#c4b5fd"}
+        showLabel={false}
+      />
+      <Text dimColor>{"  "}</Text>
       <Text color={urgent ? "#f87171" : "#c4b5fd"} bold={urgent}>
         {`${remainingSec}s`}
       </Text>
@@ -197,14 +218,18 @@ export function SubagentRow({
 }) {
   const tick = useTick();
   const seconds = (activity.elapsedMs / 1000).toFixed(1);
+  // Bracket-text style — same vocabulary as the static ToolPill so a
+  // turn that contains both finished tools and a live subagent reads
+  // as a consistent column. The braille spinner + colored ⌬ + colored
+  // name carry enough weight without a solid-bg block.
   return (
     <Box paddingLeft={3}>
       <Text color="#c4b5fd" bold>
         {SPINNER_FRAMES[tick % SPINNER_FRAMES.length]}
       </Text>
       <Text>{"  "}</Text>
-      <Text backgroundColor="#c4b5fd" color="black" bold>
-        {" ⌬ subagent "}
+      <Text color="#c4b5fd" bold>
+        ⌬ subagent
       </Text>
       <Text color="#c4b5fd">{`  ${activity.task}`}</Text>
       <Text dimColor>{`   iter ${activity.iter}  ·  ${seconds}s`}</Text>
@@ -237,6 +262,9 @@ export function OngoingToolRow({
   const tick = useTick();
   const elapsed = useElapsedSeconds();
   const summary = summarizeToolArgs(tool.name, tool.args);
+  // Bracket-text style — matches the static ToolPill that lands once
+  // the call resolves, so a row of in-flight + finished tools reads
+  // as one continuous column instead of two visual languages.
   return (
     <Box marginY={1} flexDirection="column" paddingX={1}>
       <Box>
@@ -244,11 +272,10 @@ export function OngoingToolRow({
           {SPINNER_FRAMES[tick % SPINNER_FRAMES.length]}
         </Text>
         <Text>{"  "}</Text>
-        <Text backgroundColor="#fcd34d" color="black" bold>
-          {` ⏵ ${tool.name} `}
+        <Text color="#fcd34d" bold>
+          {`▣ ${tool.name}`}
         </Text>
-        <Text color="#fcd34d">{" running"}</Text>
-        <Text dimColor>{`  ·  ${elapsed}s`}</Text>
+        <Text dimColor>{`  running · ${elapsed}s`}</Text>
       </Box>
       {progress ? (
         <Box paddingLeft={3}>

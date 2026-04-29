@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 // biome-ignore lint/style/useImportType: tsconfig.jsx = "react" needs React in value scope for JSX compilation
 import React from "react";
 import type { SlashCommandSpec } from "./slash.js";
+import { COLOR, GLYPH } from "./theme.js";
 
 export interface SlashArgPickerProps {
   /**
@@ -36,15 +37,30 @@ export function SlashArgPicker({
   kind,
   partial,
 }: SlashArgPickerProps): React.ReactElement | null {
-  // Hint mode: a single dim row explaining the argsHint + summary.
+  // Header row shared by both hint and picker modes — same shape so
+  // the UI looks like the same affordance, just with or without rows
+  // beneath. cmd in accent violet (matches SlashSuggestions), argsHint
+  // in dim, summary in info.
+  const headerRow = (
+    <Box>
+      <Text color={COLOR.accent} bold>
+        {"/ "}
+      </Text>
+      <Text color={COLOR.accent} bold>
+        {`/${spec.cmd}`}
+      </Text>
+      {spec.argsHint ? (
+        <Text dimColor>{` ${spec.argsHint}`}</Text>
+      ) : null}
+      <Text dimColor>{`  ${spec.summary}`}</Text>
+    </Box>
+  );
+
+  // Hint mode: header only.
   if (kind === "hint") {
     return (
       <Box paddingX={1} marginTop={1}>
-        <Text dimColor>
-          {"  "}
-          <Text bold>/{spec.cmd}</Text>
-          {spec.argsHint ? ` ${spec.argsHint}` : ""} — {spec.summary}
-        </Text>
+        {headerRow}
       </Box>
     );
   }
@@ -53,12 +69,14 @@ export function SlashArgPicker({
   if (matches.length === 0) {
     return (
       <Box flexDirection="column" paddingX={1} marginTop={1}>
-        <Text dimColor>
-          {"  "}
-          <Text bold>/{spec.cmd}</Text>
-          {spec.argsHint ? ` ${spec.argsHint}` : ""} — {spec.summary}
-        </Text>
-        <Text color="yellow"> no match for "{partial}" — keep typing, or Backspace to edit</Text>
+        {headerRow}
+        <Box>
+          <Text color={COLOR.warn} bold>
+            {GLYPH.warn}
+          </Text>
+          <Text color={COLOR.warn}>{` no match for "${partial}"`}</Text>
+          <Text dimColor>{" — keep typing, or Backspace to edit"}</Text>
+        </Box>
       </Box>
     );
   }
@@ -72,36 +90,27 @@ export function SlashArgPicker({
   const hiddenBelow = total - windowStart - shown.length;
   return (
     <Box flexDirection="column" paddingX={1} marginTop={1}>
-      <Text dimColor>
-        {"  "}
-        <Text bold>/{spec.cmd}</Text>
-        {spec.argsHint ? ` ${spec.argsHint}` : ""} — {spec.summary}
-      </Text>
-      {hiddenAbove > 0 ? <Text dimColor> ↑ {hiddenAbove} more above</Text> : null}
+      {headerRow}
+      {hiddenAbove > 0 ? <Text dimColor>{`   ↑ ${hiddenAbove} above`}</Text> : null}
       {shown.map((value, i) => (
         <ArgRow key={value} value={value} isSelected={windowStart + i === selectedIndex} />
       ))}
-      {hiddenBelow > 0 ? <Text dimColor> ↓ {hiddenBelow} more below</Text> : null}
-      <Text dimColor> [↑↓] navigate · [Tab]/[Enter] pick</Text>
+      {hiddenBelow > 0 ? <Text dimColor>{`   ↓ ${hiddenBelow} below`}</Text> : null}
+      <Box marginTop={0}>
+        <Text dimColor>{"  ↑↓ navigate · Tab / ⏎ pick · esc cancel"}</Text>
+      </Box>
     </Box>
   );
 }
 
 function ArgRow({ value, isSelected }: { value: string; isSelected: boolean }) {
-  const marker = isSelected ? "▸" : " ";
-  if (isSelected) {
-    return (
-      <Box>
-        <Text bold color="cyan">
-          {marker} {value}
-        </Text>
-      </Box>
-    );
-  }
   return (
     <Box>
-      <Text dimColor>
-        {marker} {value}
+      <Text color={isSelected ? COLOR.primary : COLOR.info} bold={isSelected}>
+        {isSelected ? `${GLYPH.cur} ` : "  "}
+      </Text>
+      <Text color={isSelected ? COLOR.user : COLOR.info} bold={isSelected} dimColor={!isSelected}>
+        {value}
       </Text>
     </Box>
   );

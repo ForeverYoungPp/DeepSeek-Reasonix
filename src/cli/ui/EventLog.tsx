@@ -7,7 +7,7 @@ import type { PlanStep } from "../../tools/plan.js";
 import { PlanStateBlock } from "./PlanStateBlock.js";
 import { PlanStepList } from "./PlanStepList.js";
 import { Markdown } from "./markdown.js";
-import { COLOR, gradientCells } from "./theme.js";
+import { COLOR, GLYPH, gradientCells } from "./theme.js";
 import { useElapsedSeconds, useTick } from "./ticker.js";
 import { formatDuration, summarizeToolResult } from "./tool-summary.js";
 
@@ -46,7 +46,15 @@ export type DisplayRole =
    * dim border + ⏪ icon — so the user immediately sees this is
    * historical, not the active plan.
    */
-  | "plan-replay";
+  | "plan-replay"
+  /**
+   * Token-usage breakdown rendered by the `/context` slash. Carries
+   * a structured `ctxBreakdown` payload so EventLog can render the
+   * stacked colored char-bar with proper Box+Text layout — slash
+   * info text can't carry per-segment color, so /context pushes this
+   * specialized event role instead of plain "info".
+   */
+  | "ctx-breakdown";
 
 export interface DisplayEvent {
   id: string;
@@ -125,6 +133,28 @@ export interface DisplayEvent {
    * this off; App.tsx sets it based on whether history is empty.
    */
   leadSeparator?: boolean;
+  /**
+   * Populated on `ctx-breakdown` rows. Token counts per category +
+   * the context window cap. EventLog renders this as a 4-color
+   * stacked char-bar using truecolor segment colors; falls back to
+   * sequential block characters on legacy terminals.
+   */
+  ctxBreakdown?: {
+    systemTokens: number;
+    toolsTokens: number;
+    logTokens: number;
+    inputTokens: number;
+    ctxMax: number;
+    /** Number of tools registered, surfaced in the legend's tools row. */
+    toolsCount: number;
+    /** Number of messages in the conversation log. */
+    logMessages: number;
+    /**
+     * Top-N heaviest tool results (by token count) for the "where's
+     * the bloat" follow-up. Empty when no tool results in the log.
+     */
+    topTools: Array<{ name: string; tokens: number; turn: number }>;
+  };
 }
 
 /**
@@ -159,18 +189,24 @@ function RoleGlyph({
 }
 
 /**
- * Solid-background pill for tool names. Mirrors the StatsPanel's mode
- * pills so the visual language stays consistent across the screen:
- * status (auto/review/plan), tool name, model. Status drives the
- * background color — yellow for ok/in-flight, red for errors — so a
- * scrollback full of tool dispatches reads at a glance.
+ * Tool name + status indicator. Bracket-text style (not solid-bg pill)
+ * because tool calls cluster — a turn with 6 reads + 2 edits + a grep
+ * would mean 9 high-contrast color blocks fighting for attention.
+ * Bracket text + colored glyph + colored name gives the eye a clear
+ * landmark per row without making every row shout.
+ *
+ *   ▣ read_file        → ok
+ *   ▥ run_command      → err  (rose)
+ *
+ * Visual grammar matches the design doc: status icon first, name in
+ * the matching color, no padded-bg block.
  */
 function ToolPill({ label, status }: { label: string; status: "ok" | "err" }) {
-  const bg = status === "err" ? "red" : "yellow";
-  const symbol = status === "err" ? "✗" : "✓";
+  const color = status === "err" ? COLOR.toolErr : COLOR.tool;
+  const symbol = status === "err" ? GLYPH.toolErr : GLYPH.toolOk;
   return (
-    <Text backgroundColor={bg} color="black" bold>
-      {` ${symbol} ${label} `}
+    <Text color={color} bold>
+      {`${symbol} ${label}`}
     </Text>
   );
 }
@@ -287,10 +323,11 @@ export const EventRow = React.memo(function EventRow({
         </Box>
       );
     }
-    // Compact one-line render for everything else. The summarizer
-    // produces a tool-aware one-liner (exit code for shell, line
-    // count for read_file, error tag for failures, ...). Full content
-    // remains accessible via `/tool N`, hinted as a dim suffix.
+    // Compact one-line render for everything else. Wrapped in a
+    // yellow-left-bar Box so it shares the same "card column" visual
+    // language as user/assistant turns — the eye reads the conversation
+    // log as one continuous column with role-coded accents, not as a
+    // mix of bordered turns and disconnected naked rows.
     const summary = summarizeToolResult(event.toolName ?? "?", event.text);
     const status: "ok" | "err" = summary.isError ? "err" : "ok";
     const durationLabel =
@@ -299,7 +336,14 @@ export const EventRow = React.memo(function EventRow({
         : "";
     const indexHint = event.toolIndex !== undefined ? `  /tool ${event.toolIndex}` : "";
     return (
-      <Box>
+      <Box
+        borderStyle="single"
+        borderTop={false}
+        borderRight={false}
+        borderBottom={false}
+        borderColor={status === "err" ? COLOR.toolErr : COLOR.tool}
+        paddingLeft={1}
+      >
         <ToolPill label={event.toolName ?? "?"} status={status} />
         {durationLabel ? <Text dimColor>{`  ${durationLabel}`}</Text> : null}
         <Text dimColor>{"  "}</Text>
@@ -312,12 +356,20 @@ export const EventRow = React.memo(function EventRow({
   }
   if (event.role === "error") {
     return (
-      <Box marginTop={1}>
-        <Text backgroundColor="#f87171" color="black" bold>
-          {" ✦ ERROR "}
+      <Box
+        marginTop={1}
+        borderStyle="single"
+        borderTop={false}
+        borderRight={false}
+        borderBottom={false}
+        borderColor={COLOR.err}
+        paddingLeft={1}
+      >
+        <Text color={COLOR.err} bold>
+          ✦ error
         </Text>
         <Text>{"  "}</Text>
-        <Text color="#f87171">{indentContinuationLines(event.text)}</Text>
+        <Text color={COLOR.err}>{indentContinuationLines(event.text)}</Text>
       </Box>
     );
   }
@@ -334,8 +386,18 @@ export const EventRow = React.memo(function EventRow({
     else if (lead === "✓") leadColor = COLOR.ok;
     else if (lead === "✗" || lead === "✖") leadColor = COLOR.err;
     else if (lead === "↻") leadColor = COLOR.primary;
+    // Same conversation-column visual: left bar in the lead's color,
+    // glyph + body indented under it. Without the bar, info rows looked
+    // like floating debug text rather than a coherent log entry.
     return (
-      <Box>
+      <Box
+        borderStyle="single"
+        borderTop={false}
+        borderRight={false}
+        borderBottom={false}
+        borderColor={leadColor}
+        paddingLeft={1}
+      >
         <Text color={leadColor} bold>
           {lead}
         </Text>
@@ -482,14 +544,24 @@ export const EventRow = React.memo(function EventRow({
   }
   if (event.role === "warning") {
     return (
-      <Box>
-        <Text backgroundColor="#fbbf24" color="black" bold>
-          {" ▲ WARN "}
+      <Box
+        borderStyle="single"
+        borderTop={false}
+        borderRight={false}
+        borderBottom={false}
+        borderColor={COLOR.warn}
+        paddingLeft={1}
+      >
+        <Text color={COLOR.warn} bold>
+          ▲ warn
         </Text>
         <Text>{"  "}</Text>
-        <Text color="#fbbf24">{indentContinuationLines(event.text)}</Text>
+        <Text color={COLOR.warn}>{indentContinuationLines(event.text)}</Text>
       </Box>
     );
+  }
+  if (event.role === "ctx-breakdown" && event.ctxBreakdown) {
+    return <CtxBreakdownBlock data={event.ctxBreakdown} />;
   }
   return (
     <Box>
@@ -640,6 +712,124 @@ function BranchBlock({ branch }: { branch: BranchSummary }) {
   );
 }
 
+/**
+ * `/context` token-usage breakdown — 4-color stacked char-bar across
+ * 48 cells, with a legend showing per-category token counts. Matches
+ * the design doc's `ctx-chart` state.
+ *
+ *   ▣ context · 94.2K of 128K (74%)
+ *   ████████████████████████████████░░░░░░░░░░░░░░░░
+ *   ■ system  5.6K   ■ tools  10.4K   ■ log  68.2K   ■ input  2.8K   free  25.0K
+ *
+ * Each `█` cell of the bar is colored per the category it represents
+ * (brand teal / accent violet / primary cyan / tool amber). The legend
+ * uses the same colors on the swatches so the user can map cell-to-row
+ * by color alone.
+ */
+function CtxBreakdownBlock({
+  data,
+}: {
+  data: NonNullable<DisplayEvent["ctxBreakdown"]>;
+}) {
+  const total = data.systemTokens + data.toolsTokens + data.logTokens + data.inputTokens;
+  const winPct = data.ctxMax > 0 ? Math.round((total / data.ctxMax) * 100) : 0;
+  const barWidth = 48;
+  // Compute filled cells per segment proportionally to ctxMax. Segments
+  // sum to <=barWidth; remainder is "free".
+  const cellOf = (n: number) =>
+    data.ctxMax > 0 ? Math.round((n / data.ctxMax) * barWidth) : 0;
+  const sysCells = cellOf(data.systemTokens);
+  const toolsCells = cellOf(data.toolsTokens);
+  const logCells = cellOf(data.logTokens);
+  const inputCells = cellOf(data.inputTokens);
+  const used = sysCells + toolsCells + logCells + inputCells;
+  const freeCells = Math.max(0, barWidth - used);
+
+  const sevColor =
+    winPct >= 80 ? COLOR.err : winPct >= 60 ? COLOR.warn : COLOR.ok;
+
+  // Wrapped in a brand-colored left-bar Box so the breakdown shares
+  // the same conversation-column visual language as user / assistant /
+  // tool turns. Without the bar, /context output read as a disconnected
+  // floating block. With it, the eye sees "this belongs to the column".
+  return (
+    <Box
+      flexDirection="column"
+      marginY={1}
+      borderStyle="single"
+      borderTop={false}
+      borderRight={false}
+      borderBottom={false}
+      borderColor={COLOR.brand}
+      paddingLeft={1}
+    >
+      <Box>
+        <Text color={COLOR.brand} bold>
+          ▣ context
+        </Text>
+        <Text dimColor>
+          {`  ${formatTokensCompact(total)} of ${formatTokensCompact(data.ctxMax)}`}
+        </Text>
+        <Text dimColor>{"  ·  "}</Text>
+        <Text color={sevColor} bold>
+          {`${winPct}%`}
+        </Text>
+        {winPct >= 80 ? (
+          <Text color={COLOR.err} bold>
+            {"  ·  /compact"}
+          </Text>
+        ) : null}
+      </Box>
+      <Box>
+        <Text color={COLOR.brand}>{"█".repeat(sysCells)}</Text>
+        <Text color={COLOR.accent}>{"█".repeat(toolsCells)}</Text>
+        <Text color={COLOR.primary}>{"█".repeat(logCells)}</Text>
+        <Text color={COLOR.tool}>{"█".repeat(inputCells)}</Text>
+        <Text color={COLOR.info} dimColor>
+          {"░".repeat(freeCells)}
+        </Text>
+      </Box>
+      <Box>
+        <Text color={COLOR.brand}>■</Text>
+        <Text dimColor>{` system ${formatTokensCompact(data.systemTokens)}`}</Text>
+        <Text>{"   "}</Text>
+        <Text color={COLOR.accent}>■</Text>
+        <Text dimColor>{` tools ${formatTokensCompact(data.toolsTokens)}`}</Text>
+        <Text dimColor>{` (${data.toolsCount})`}</Text>
+        <Text>{"   "}</Text>
+        <Text color={COLOR.primary}>■</Text>
+        <Text dimColor>{` log ${formatTokensCompact(data.logTokens)}`}</Text>
+        <Text dimColor>{` (${data.logMessages} msg)`}</Text>
+        <Text>{"   "}</Text>
+        <Text color={COLOR.tool}>■</Text>
+        <Text dimColor>{` input ${formatTokensCompact(data.inputTokens)}`}</Text>
+      </Box>
+      {data.topTools.length > 0 ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>{`  top tool results by cost (${data.topTools.length}):`}</Text>
+          {data.topTools.map((t) => (
+            <Box key={`${t.turn}-${t.name}`}>
+              <Text dimColor>{`    turn ${String(t.turn).padStart(3)}  `}</Text>
+              <Text color={COLOR.info}>{t.name.padEnd(22)}</Text>
+              <Text dimColor>{`  ${formatTokensCompact(t.tokens).padStart(8)}`}</Text>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+      <Box marginTop={1}>
+        <Text dimColor>{"  /compact shrinks oversized tool results · /new wipes log"}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+/** Compact 1.2K / 128K formatter. Mirrors StatsPanel's formatTokens. */
+function formatTokensCompact(n: number): string {
+  if (n < 1024) return String(n);
+  const k = n / 1024;
+  return k >= 100 ? `${k.toFixed(0)}K` : `${k.toFixed(1)}K`;
+}
+
 function ReasoningBlock({ reasoning }: { reasoning: string }) {
   const max = 260;
   const flat = reasoning.replace(/\s+/g, " ").trim();
@@ -650,15 +840,38 @@ function ReasoningBlock({ reasoning }: { reasoning: string }) {
   // Users can dump the full reasoning with `/think` if needed.
   const preview =
     flat.length <= max ? flat : `… (+${flat.length - max} earlier chars) ${flat.slice(-max)}`;
+  // Approximate tokens for the meta line — R1 reasoning_content runs
+  // 4-6 chars/token in English, which is what /think also uses for
+  // its summary header. Rough is fine; the user reads "ballpark size"
+  // not "exact bill".
+  const tokensApprox = Math.max(1, Math.round(flat.length / 4.5));
+  const tokLabel = tokensApprox >= 1000 ? `${(tokensApprox / 1000).toFixed(1)}k` : `${tokensApprox}`;
+  // Layout (matches design/tui-redesign-ink.html R1 reasoning state):
+  //   R1 ↯ reasoning · ~Nk tok
+  //   │  <preview text — dim violet italic, left-bordered>
+  // The left border is a Box `borderStyle="single" borderLeft` colored
+  // violet — same idiom user/assistant turns use, just dimmer to mark
+  // this as supplementary thought rather than primary content.
   return (
-    <Box marginBottom={1}>
-      <Text backgroundColor={COLOR.accent} color="black" bold>
-        {" ⋯ thinking "}
-      </Text>
-      <Text> </Text>
-      <Text color={COLOR.accent} italic dimColor>
-        {preview}
-      </Text>
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color={COLOR.accent} bold>
+          R1 ↯
+        </Text>
+        <Text dimColor>{`  reasoning · ~${tokLabel} tok · /think for full`}</Text>
+      </Box>
+      <Box
+        borderStyle="single"
+        borderTop={false}
+        borderRight={false}
+        borderBottom={false}
+        borderColor={COLOR.accent}
+        paddingLeft={1}
+      >
+        <Text color={COLOR.accent} italic dimColor>
+          {preview}
+        </Text>
+      </Box>
     </Box>
   );
 }
@@ -756,92 +969,82 @@ function StreamingAssistant({ event }: { event: DisplayEvent }) {
   const preFirstByte = !event.text && !event.reasoning && !toolCallBuild;
   const reasoningOnly = !event.text && !!event.reasoning && !toolCallBuild;
   const toolCallOnly = !event.text && !event.reasoning && !!toolCallBuild;
-  // Phase pill — solid bg color per phase so the user reads
-  // "what's happening" at a glance from across the screen. Pill text
-  // is padded to a fixed width so a phase transition (WAITING →
-  // THINKING → WRITING) doesn't shift everything to its right by 1
-  // column. Yoga reflows on width change; locking the pill stops the
-  // streaming row from twitching every time the model crosses a phase.
-  const PILL_WIDTH = 8;
-  let pillBg: string;
-  let pillText: string;
-  let label: string;
+
+  // Phase verb + accent color — rendered inline as `assistant · thinking`
+  // bracket-text style, NOT a solid-bg pill. Matches the design doc's
+  // streaming state: same shape as a finished assistant turn (◆ + meta
+  // row + body), just with a phase verb in place of the model badge
+  // and a blinking cursor at the tail.
+  let phaseVerb: string;
+  let phaseColor: string;
   if (preFirstByte) {
-    pillBg = "#fbbf24"; // amber
-    pillText = "WAITING";
-    label = "request sent · waiting for server";
+    phaseVerb = "waiting";
+    phaseColor = COLOR.warn;
   } else if (reasoningOnly) {
-    pillBg = "#c4b5fd"; // violet
-    pillText = "THINKING";
-    label = `${event.reasoning?.length ?? 0} chars of thought`;
+    phaseVerb = "thinking";
+    phaseColor = COLOR.accent;
   } else if (toolCallOnly) {
-    pillBg = "#f0abfc"; // fuchsia
-    pillText = "DISPATCH";
-    label = `assembling${formatToolCallIndex(toolCallBuild)} <${toolCallBuild.name}> · ${toolCallBuild.chars} chars${formatReadyTail(toolCallBuild)}`;
+    phaseVerb = `dispatching ${toolCallBuild.name}`;
+    phaseColor = COLOR.accent;
   } else {
-    pillBg = "#86efac"; // green
-    pillText = "WRITING";
-    const parts: string[] = [`${event.text.length} chars`];
-    if (event.reasoning) parts.push(`after ${event.reasoning.length} reasoning`);
-    if (toolCallBuild) {
-      parts.push(
-        `tool${formatToolCallIndex(toolCallBuild)} <${toolCallBuild.name}> ${toolCallBuild.chars}c${formatReadyTail(toolCallBuild)}`,
-      );
-    }
-    label = parts.join(" · ");
+    phaseVerb = event.reasoning ? "writing (after R1)" : "writing";
+    phaseColor = COLOR.assistant;
   }
-  pillText = pillText.padEnd(PILL_WIDTH);
+
+  // Compact detail string — tail of the visible content, short enough
+  // to fit in the body row. Never the phase noise (chars counters,
+  // ready tail) — that's Reasonix-internal, not user-facing.
+  const detail =
+    tail ||
+    (reasoningTail ? `↳ ${reasoningTail}` : "") ||
+    (preFirstByte
+      ? "waiting for first byte — 5-60s typical"
+      : reasoningOnly
+        ? `R1 thinking · ~${Math.round((event.reasoning?.length ?? 0) / 4)} tok so far`
+        : toolCallOnly
+          ? `assembling ${toolCallBuild.name}${formatToolCallIndex(toolCallBuild)} · ${toolCallBuild.chars} chars${formatReadyTail(toolCallBuild)}`
+          : event.reasoning
+            ? "R1 still reasoning — body or tool call arrives when thinking finishes"
+            : "");
+
+  // Same turn shape as the finished assistant render: glyph + meta row,
+  // then a left-accent-bordered body. The cursor block ▌ at the tail
+  // is the streaming signal — same idiom as a terminal cursor, blinks
+  // via Pulse but rendered as plain ▌ here so it doesn't compete with
+  // the spinner glyph next to ◆.
   return (
     <Box flexDirection="column" marginTop={1}>
       <Box>
         <PulsingAssistantGlyph />
         <Text>{"  "}</Text>
         <Pulse />
-        <Text> </Text>
-        <Text backgroundColor={pillBg} color="black" bold>
-          {` ${pillText} `}
+        <Text>{"  "}</Text>
+        <Text color={phaseColor} bold>
+          {phaseVerb}
         </Text>
-        <Text dimColor>{`  ${label}  `}</Text>
+        <Text dimColor>{"  ·  "}</Text>
         <Elapsed />
       </Box>
-      {reasoningTail ? (
-        <Box paddingLeft={3}>
-          <Text color="#c4b5fd" italic dimColor>
-            ↳ {reasoningTail}
+      <Box
+        marginTop={1}
+        borderStyle="single"
+        borderTop={false}
+        borderRight={false}
+        borderBottom={false}
+        borderColor={COLOR.assistant}
+        paddingLeft={1}
+        flexDirection="column"
+      >
+        {detail ? (
+          <Text dimColor wrap="truncate-end">
+            {detail}
+            {/* trailing cursor block — same blink cadence as Pulse */}
+            <Text color={COLOR.primary}>{" ▌"}</Text>
           </Text>
-        </Box>
-      ) : null}
-      {tail ? (
-        <Box paddingLeft={3}>
-          <Text dimColor>▸ {tail}</Text>
-        </Box>
-      ) : preFirstByte ? (
-        // Non-dim amber: first-time users misread the dim version as
-        // "app frozen". The reassurance has to be VISIBLE to do its job.
-        <Box paddingLeft={3}>
-          <Text color="#fbbf24" italic>
-            {"waiting for first byte — typical 5–60s depending on model + load"}
-          </Text>
-        </Box>
-      ) : reasoningOnly ? (
-        <Box paddingLeft={3}>
-          <Text color="#c4b5fd" italic>
-            {"R1 thinks before it speaks — body text arrives when reasoning finishes (20–90s)"}
-          </Text>
-        </Box>
-      ) : toolCallOnly ? (
-        <Box paddingLeft={3}>
-          <Text color="#f0abfc" italic>
-            {"tool-call arguments streaming — about to dispatch"}
-          </Text>
-        </Box>
-      ) : event.reasoning ? (
-        <Box paddingLeft={3}>
-          <Text color="#fbbf24" italic>
-            {"R1 still reasoning — body text or tool call arrives when thinking finishes"}
-          </Text>
-        </Box>
-      ) : null}
+        ) : (
+          <Text color={COLOR.primary}>▌</Text>
+        )}
+      </Box>
     </Box>
   );
 }

@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import React from "react";
 import { SingleSelect } from "./Select.js";
+import { COLOR, GLYPH } from "./theme.js";
 
 export type SessionChoice = "resume" | "new" | "delete";
 
@@ -12,6 +13,15 @@ export interface SessionPickerProps {
   onChoose: (choice: SessionChoice) => void;
 }
 
+/**
+ * Resume / new / delete picker shown at launch when a prior session
+ * file exists. Three lines of header (brand mark · session summary)
+ * then the selector, then a footer with key bindings.
+ *
+ * Visual grammar matches the design's session-resume modal: brand
+ * glyph in primary color, session name highlighted, the rest dim.
+ * No solid-bg pills — bracket-text style continues.
+ */
 export function SessionPicker({
   sessionName,
   messageCount,
@@ -21,9 +31,14 @@ export function SessionPicker({
   return (
     <Box flexDirection="column" marginY={1}>
       <Box marginBottom={1}>
-        <Text bold color="cyan">
-          {`Session "${sessionName}" has ${messageCount} prior message${messageCount === 1 ? "" : "s"}`}
+        <Text color={COLOR.brand} bold>
+          {GLYPH.brand}
         </Text>
+        <Text>{"  "}</Text>
+        <Text color={COLOR.primary} bold>
+          {`"${sessionName}"`}
+        </Text>
+        <Text dimColor>{` has ${messageCount} prior message${messageCount === 1 ? "" : "s"}`}</Text>
         <Text dimColor>{` · last active ${relativeTime(lastActive)}`}</Text>
       </Box>
       <SingleSelect
@@ -48,7 +63,7 @@ export function SessionPicker({
         onSubmit={(v) => onChoose(v as SessionChoice)}
       />
       <Box marginTop={1}>
-        <Text dimColor>[↑↓] navigate · [Enter] select</Text>
+        <Text dimColor>{"  ↑↓ navigate · ⏎ select"}</Text>
       </Box>
     </Box>
   );

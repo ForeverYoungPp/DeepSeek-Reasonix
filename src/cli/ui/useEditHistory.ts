@@ -73,6 +73,14 @@ export interface UseEditHistoryResult {
    * Reads the ref fresh — callers must re-read each time.
    */
   hasUndoable: () => boolean;
+  /**
+   * Repo-relative paths the session has edited so far, deduped. Used by
+   * `/checkpoint` to capture "what's been touched in this run". Includes
+   * paths from undone batches too — the snapshot value is "what files
+   * could the user want to roll back later?", and an undone batch still
+   * represents a file the user was thinking about.
+   */
+  touchedPaths: () => string[];
 }
 
 /**
@@ -296,6 +304,14 @@ export function useEditHistory(codeMode: { rootDir: string } | undefined): UseEd
     [],
   );
 
+  const touchedPaths = useCallback<UseEditHistoryResult["touchedPaths"]>(() => {
+    const seen = new Set<string>();
+    for (const entry of editHistory.current) {
+      for (const b of entry.blocks) seen.add(b.path);
+    }
+    return [...seen];
+  }, []);
+
   return {
     undoBanner,
     recordEdit,
@@ -305,5 +321,6 @@ export function useEditHistory(codeMode: { rootDir: string } | undefined): UseEd
     codeShowEdit,
     sealCurrentEntry,
     hasUndoable,
+    touchedPaths,
   };
 }

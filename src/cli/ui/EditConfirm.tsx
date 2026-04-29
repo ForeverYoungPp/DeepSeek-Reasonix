@@ -1,8 +1,9 @@
 import { Box, Text, useStdout } from "ink";
 import React, { useMemo, useState } from "react";
-import { formatEditBlockDiff } from "../../code/diff-preview.js";
+import { formatEditBlockSplit } from "../../code/diff-preview.js";
 import type { EditBlock } from "../../code/edit-blocks.js";
 import { ModalCard } from "./ModalCard.js";
+import { SplitDiff } from "./SplitDiff.js";
 import { useKeystroke } from "./keystroke-context.js";
 
 /**
@@ -61,16 +62,16 @@ export function EditConfirm({ block, onChoose }: EditConfirmProps) {
   const rows = stdout?.rows ?? 40;
   const budget = Math.max(MIN_DIFF_ROWS, rows - MODAL_OVERHEAD_ROWS);
 
-  // Full diff — maxLines pushed high enough that the diff-preview
-  // renderer never inserts its own truncation marker. Context trimming
-  // (contextLines) still applies for tight scan.
-  const allLines = useMemo(
-    () => formatEditBlockDiff(block, { contextLines: 2, maxLines: 100_000, indent: "  " }),
+  // Side-by-side rows — maxLines pushed high so the split renderer
+  // never inserts its own truncation marker; we slice + scroll here.
+  // contextLines: 2 keeps the trim tight on each end.
+  const allRows = useMemo(
+    () => formatEditBlockSplit(block, { contextLines: 2, maxLines: 100_000 }),
     [block],
   );
 
   const [scroll, setScroll] = useState(0);
-  const maxScroll = Math.max(0, allLines.length - budget);
+  const maxScroll = Math.max(0, allRows.length - budget);
   // Clamp scroll if budget shrinks (terminal resized) after a previous
   // keypress drove the offset past the new ceiling.
   const effectiveScroll = Math.min(scroll, maxScroll);
@@ -132,83 +133,75 @@ export function EditConfirm({ block, onChoose }: EditConfirmProps) {
   const added = block.replace === "" ? 0 : (block.replace.match(/\n/g)?.length ?? 0) + 1;
   const tag = isNew ? "NEW" : "EDIT";
 
-  const visibleLines = allLines.slice(effectiveScroll, effectiveScroll + budget);
+  const visibleRows = allRows.slice(effectiveScroll, effectiveScroll + budget);
   const hiddenAbove = effectiveScroll;
-  const hiddenBelow = Math.max(0, allLines.length - effectiveScroll - budget);
-  const totalLines = allLines.length;
+  const hiddenBelow = Math.max(0, allRows.length - effectiveScroll - budget);
+  const totalLines = allRows.length;
   const showScrollHud = hiddenAbove + hiddenBelow > 0;
 
   const subtitleParts = [`-${removed} +${added} lines`];
   if (showScrollHud) {
     subtitleParts.push(
-      `viewing ${effectiveScroll + 1}-${effectiveScroll + visibleLines.length}/${totalLines}`,
+      `viewing ${effectiveScroll + 1}-${effectiveScroll + visibleRows.length}/${totalLines}`,
     );
   }
+  const footer = (
+    <Text dimColor>
+      {"["}
+      <Text color="#67e8f9" bold>
+        y
+      </Text>
+      {"/Enter] apply  ·  ["}
+      <Text color="#67e8f9" bold>
+        n
+      </Text>
+      {"] reject  ·  ["}
+      <Text color="#67e8f9" bold>
+        a
+      </Text>
+      {"] apply rest  ·  ["}
+      <Text color="#67e8f9" bold>
+        A
+      </Text>
+      {"] flip AUTO  ·  ["}
+      <Text color="#67e8f9" bold>
+        ↑↓/Space
+      </Text>
+      {"] scroll  ·  [Esc] abort"}
+    </Text>
+  );
+
   return (
     <ModalCard
       accent={isNew ? "#86efac" : "#fcd34d"}
       icon={isNew ? "✚" : "✎"}
       title={`${tag}  ${block.path}`}
       subtitle={subtitleParts.join("  ·  ")}
+      footer={footer}
     >
       {hiddenAbove > 0 ? (
         <Text
           dimColor
         >{`  ↑ ${hiddenAbove} line${hiddenAbove === 1 ? "" : "s"} above  (↑/k or PgUp)`}</Text>
       ) : null}
-      <Box flexDirection="column">
-        {visibleLines.map((line, i) => {
-          const trimmed = line.trimStart();
-          const color = trimmed.startsWith("+")
-            ? "#4ade80"
-            : trimmed.startsWith("-")
-              ? "#f87171"
-              : undefined;
-          const dim = !color;
-          return (
-            <Text
-              // Stable-enough: slice only shifts by scroll; React keys only
-              // need to be unique within the current render.
-              // biome-ignore lint/suspicious/noArrayIndexKey: list is static per render
-              key={`diff-${effectiveScroll}-${i}`}
-              color={color}
-              dimColor={dim}
-            >
-              {line}
-            </Text>
-          );
-        })}
+      <SplitDiff rows={visibleRows} />
+      <Box>
+        <Text color="#fbc8c8" backgroundColor="#2a1212">
+          {"  - old  "}
+        </Text>
+        <Text>{"  "}</Text>
+        <Text color="#bef0c8" backgroundColor="#0c2718">
+          {"  + new  "}
+        </Text>
+        <Text dimColor>
+          {"   side-by-side · removed lines on the left, added on the right · paired by offset"}
+        </Text>
       </Box>
       {hiddenBelow > 0 ? (
         <Text
           dimColor
         >{`  ↓ ${hiddenBelow} line${hiddenBelow === 1 ? "" : "s"} below  (↓/j or Space/PgDn)`}</Text>
       ) : null}
-      <Box marginTop={1}>
-        <Text dimColor>
-          {"["}
-          <Text color="#67e8f9" bold>
-            y
-          </Text>
-          {"/Enter] apply  ·  ["}
-          <Text color="#67e8f9" bold>
-            n
-          </Text>
-          {"] reject  ·  ["}
-          <Text color="#67e8f9" bold>
-            a
-          </Text>
-          {"] apply rest  ·  ["}
-          <Text color="#67e8f9" bold>
-            A
-          </Text>
-          {"] flip AUTO  ·  ["}
-          <Text color="#67e8f9" bold>
-            ↑↓/Space
-          </Text>
-          {"] scroll  ·  [Esc] abort"}
-        </Text>
-      </Box>
     </ModalCard>
   );
 }

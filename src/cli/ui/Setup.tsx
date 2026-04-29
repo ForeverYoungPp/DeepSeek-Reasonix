@@ -2,6 +2,7 @@ import { Box, Text, useApp } from "ink";
 import TextInput from "ink-text-input";
 import React, { useState } from "react";
 import { defaultConfigPath, isPlausibleKey, redactKey, saveApiKey } from "../../config.js";
+import { COLOR, GLYPH, GRADIENT } from "./theme.js";
 
 export interface SetupProps {
   onReady: (apiKey: string) => void;
@@ -33,18 +34,36 @@ export function Setup({ onReady }: SetupProps) {
   };
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
-      <Text bold color="cyan">
-        Welcome to Reasonix.
-      </Text>
-      <Box marginTop={1}>
-        <Text>Paste your DeepSeek API key to get started.</Text>
+    <Box flexDirection="column" paddingX={1} marginY={1}>
+      <Box>
+        <Text bold color={GRADIENT[0]}>
+          {GLYPH.brand}
+        </Text>
+        <Text>{"  "}</Text>
+        <Text bold>Welcome to </Text>
+        <Text bold color={GRADIENT[2]}>
+          REASONIX
+        </Text>
       </Box>
-      <Text dimColor>Get one (free credit on signup): https://platform.deepseek.com/api_keys</Text>
-      <Text dimColor>Saved locally to {defaultConfigPath()}</Text>
       <Box marginTop={1}>
-        <Text bold color="cyan">
-          {"key › "}
+        <Text color={COLOR.info}>
+          Paste your DeepSeek API key to get started.
+        </Text>
+      </Box>
+      <Box>
+        <Text dimColor>{"  free credit on signup · "}</Text>
+        <Text color={COLOR.primary}>https://platform.deepseek.com/api_keys</Text>
+      </Box>
+      <Box>
+        <Text dimColor>{`  saved to `}</Text>
+        <Text dimColor>{defaultConfigPath()}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text bold color={COLOR.brand}>
+          {GLYPH.bar}
+        </Text>
+        <Text bold color={COLOR.primary}>
+          {" › "}
         </Text>
         <TextInput
           value={value}
@@ -56,15 +75,18 @@ export function Setup({ onReady }: SetupProps) {
       </Box>
       {error ? (
         <Box marginTop={1}>
-          <Text color="red">{error}</Text>
+          <Text color={COLOR.err} bold>
+            {GLYPH.err}
+          </Text>
+          <Text color={COLOR.err}>{`  ${error}`}</Text>
         </Box>
       ) : value ? (
         <Box marginTop={1}>
-          <Text dimColor>preview: {redactKey(value)}</Text>
+          <Text dimColor>{`  preview · ${redactKey(value)}`}</Text>
         </Box>
       ) : null}
       <Box marginTop={1}>
-        <Text dimColor>(Type /exit to abort.)</Text>
+        <Text dimColor>{"  /exit to abort"}</Text>
       </Box>
     </Box>
   );

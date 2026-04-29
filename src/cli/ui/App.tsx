@@ -1,6 +1,6 @@
 import type { WriteStream } from "node:fs";
 import * as pathMod from "node:path";
-import { Box, Static, Text, useStdout } from "ink";
+import { Box, Text, useStdout } from "ink";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type AtUrlExpansion, expandAtMentions, expandAtUrls } from "../../at-mentions.js";
 import {
@@ -89,6 +89,8 @@ import { resolvePreset } from "./presets.js";
 import { type McpServerSummary, handleSlash, parseSlash, suggestSlashCommands } from "./slash.js";
 import { TickerProvider } from "./ticker.js";
 import { useCompletionPickers } from "./useCompletionPickers.js";
+import { useAltScreen } from "./alt-screen.js";
+import { COLOR } from "./theme.js";
 import { useEditHistory } from "./useEditHistory.js";
 import { useSessionInfo } from "./useSessionInfo.js";
 import { useSubagent } from "./useSubagent.js";
@@ -185,6 +187,89 @@ const PLAIN_UI = process.env.REASONIX_UI === "plain";
  * Single-line status pill rendered below the modeline whenever a /loop
  * is active. Re-renders every second so the countdown ticks.
  */
+/**
+ * Given a list of historical events and the terminal's row count,
+ * return the most-recent slice that fits in the middle log region.
+ *
+ * Why the rough estimates: Ink doesn't tell us each component's
+ * rendered height before laying out. Even if it did, EventLog has
+ * conditional sub-blocks (R1 reasoning, plan-state, branch summary)
+ * whose heights vary turn-by-turn. Estimating by role is cheap and
+ * close-enough — and the parent Box's `overflow="hidden"` clips any
+ * underestimate so the prompt never gets pushed off-screen.
+ *
+ * Heights chosen by inspection:
+ *   - user             ≈ 3 + 1 per 80-char wrap     (left-bar card)
+ *   - assistant        ≈ 4 + 1 per 80-char wrap     (left-bar card +
+ *                                                    optional R1 head)
+ *   - tool (compact)   ≈ 2                          (left-bar single
+ *                                                    line, sometimes 2)
+ *   - tool (edit_file) ≈ 6 + diff lines             (header + diff)
+ *   - info / warn / err≈ 1 (single row)
+ *   - plan / plan-replay ≈ 8                        (multi-step list)
+ *   - ctx-breakdown    ≈ 6                          (4 lines + legend)
+ */
+function sliceVisibleEvents(
+  events: readonly DisplayEvent[],
+  termRows: number,
+  scrollOffset = 0,
+): DisplayEvent[] {
+  // Reserve rows for: chrome (StatsPanel + rule, ~3) + prompt area
+  // (~5: prompt + hint + suggestions buffer) + safety margin (~2).
+  const reservedRows = 10;
+  const available = Math.max(8, termRows - reservedRows);
+
+  const heightOf = (e: DisplayEvent): number => {
+    const text = e.text ?? "";
+    const wrapLines = Math.max(0, Math.floor(text.length / 80));
+    if (e.role === "user") return 3 + wrapLines;
+    if (e.role === "assistant") {
+      let h = 4 + wrapLines;
+      if (e.reasoning) h += 3;
+      if (e.branch) h += 4;
+      return h;
+    }
+    if (e.role === "tool") {
+      const isEditFile =
+        e.toolName === "edit_file" || e.toolName?.endsWith("_edit_file");
+      if (isEditFile) {
+        // Diff renderer outputs ~1 row per line of `text`.
+        const diffLines = (text.match(/\n/g)?.length ?? 0) + 1;
+        return 6 + Math.min(20, diffLines);
+      }
+      return 2;
+    }
+    if (e.role === "info" || e.role === "warning") return 2;
+    if (e.role === "error") return 2 + wrapLines;
+    if (e.role === "plan" || e.role === "plan-replay" || e.role === "plan-resumed") return 10;
+    if (e.role === "ctx-breakdown") return 7;
+    if (e.role === "step-progress") return 1;
+    return 2;
+  };
+
+  if (events.length === 0) return [];
+  // Apply scroll offset — show events ending at events.length - offset.
+  // Cap offset at events.length - 1 so the slice always contains at
+  // least the FIRST event in history. Going past that would leave the
+  // user staring at an empty middle box, which is exactly the "I
+  // scrolled into nothing" failure mode.
+  const clampedOffset = Math.max(0, Math.min(scrollOffset, events.length - 1));
+  const endIdx = events.length - clampedOffset;
+  // Always include at least the bottom-most event in the window even
+  // if it would overflow alone — overflow="hidden" on the parent Box
+  // clips the excess, but rendering NOTHING because one event is too
+  // tall is the worse failure mode.
+  let startIdx = endIdx - 1;
+  let used = heightOf(events[startIdx]!);
+  for (let i = endIdx - 2; i >= 0; i--) {
+    const h = heightOf(events[i]!);
+    if (used + h > available) break;
+    used += h;
+    startIdx = i;
+  }
+  return [...events.slice(startIdx, endIdx)];
+}
+
 function LoopStatusRow({
   loop,
 }: {
@@ -225,8 +310,106 @@ export function App({
   codeMode,
   noDashboard,
 }: AppProps) {
+  // Take over the alt screen on mount so the TUI gets the entire
+  // terminal viewport: sticky StatsPanel at row 1, scrollable log in
+  // the middle, sticky PromptInput at the last row. Restored on unmount
+  // (and on SIGINT/SIGTERM/exit) so the user's terminal returns to its
+  // pre-launch state.
+  useAltScreen();
   const [historical, setHistorical] = useState<DisplayEvent[]>([]);
   const [streaming, setStreaming] = useState<DisplayEvent | null>(null);
+
+  // Log scroll state — number of events skipped from the END.
+  //   0   → at bottom (always show latest, auto-track new events)
+  //   N>0 → user scrolled up; new events drift visible-window forward
+  //         but the scroll offset stays put until the user presses End
+  //         to jump back to latest. Mimics the chat-app pattern where
+  //         "I'm reading old messages" pauses the auto-scroll.
+  const [logScrollOffset, setLogScrollOffset] = useState(0);
+  // Smooth-scroll engine — every key/wheel scroll sets a target offset
+  // and a setInterval ease-towards loop interpolates the displayed
+  // offset over ~6-8 frames at 30fps. Wheel ticks queue: rapid wheels
+  // bump the target further before the previous animation finishes,
+  // so the eye sees one continuous glide rather than discrete jumps.
+  const scrollAnimRef = useRef<NodeJS.Timeout | null>(null);
+  const scrollTargetRef = useRef<number>(0);
+  const scrollDisplayedRef = useRef<number>(0);
+  useEffect(() => {
+    return () => {
+      if (scrollAnimRef.current) {
+        clearInterval(scrollAnimRef.current);
+        scrollAnimRef.current = null;
+      }
+    };
+  }, []);
+  // Set a new target. `next` is either a number or an updater function
+  // — same shape as React state setters. The animation easing handles
+  // the transition.
+  const animateScrollTo = useCallback(
+    (next: number | ((prev: number) => number)) => {
+      const newTarget =
+        typeof next === "function" ? next(scrollTargetRef.current) : next;
+      scrollTargetRef.current = Math.max(0, newTarget);
+      // If already running, the existing interval picks up the new
+      // target on its next tick — no need to restart.
+      if (scrollAnimRef.current) return;
+      scrollAnimRef.current = setInterval(() => {
+        const target = scrollTargetRef.current;
+        const cur = scrollDisplayedRef.current;
+        const diff = target - cur;
+        // Snap when within 1 unit — finer steps would just round to
+        // the same integer.
+        if (Math.abs(diff) < 1) {
+          scrollDisplayedRef.current = target;
+          setLogScrollOffset(target);
+          if (scrollAnimRef.current) {
+            clearInterval(scrollAnimRef.current);
+            scrollAnimRef.current = null;
+          }
+          return;
+        }
+        // Ease-out: move 25% of remaining distance per frame, with a
+        // minimum 1-step nudge so big distances still finish in a
+        // bounded number of frames.
+        const step = diff > 0 ? Math.max(1, Math.ceil(diff * 0.25)) : Math.min(-1, Math.floor(diff * 0.25));
+        scrollDisplayedRef.current = cur + step;
+        setLogScrollOffset(scrollDisplayedRef.current);
+      }, 33);
+    },
+    [],
+  );
+  // No-op kept for compat with any remaining call sites; the animation
+  // loop now owns its lifecycle.
+  const stopScrollAnimation = useCallback(() => {
+    /* animateScrollTo handles its own teardown on each new target */
+  }, []);
+  // Anchor + clamp the visible window when historical changes:
+  //   · GROWS while user is scrolled up — bump offset by delta so the
+  //     same events stay framed. Without this, every appended turn
+  //     slides the window forward by 1, pushing what the user was
+  //     reading off-screen.
+  //   · SHRINKS (e.g. /new wipes log) — clamp offset so we never
+  //     point past the new end. Otherwise the user sees an empty
+  //     middle box even though there are events to show.
+  const lastHistoricalLenRef = useRef(0);
+  useEffect(() => {
+    const prev = lastHistoricalLenRef.current;
+    const cur = historical.length;
+    lastHistoricalLenRef.current = cur;
+    if (cur > prev && scrollTargetRef.current > 0) {
+      const delta = cur - prev;
+      scrollTargetRef.current += delta;
+      scrollDisplayedRef.current += delta;
+      setLogScrollOffset((p) => p + delta);
+    } else if (cur < prev) {
+      const newMax = Math.max(0, cur - 1);
+      if (scrollTargetRef.current > newMax) {
+        scrollTargetRef.current = newMax;
+        scrollDisplayedRef.current = newMax;
+        setLogScrollOffset(newMax);
+      }
+    }
+  }, [historical]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   // Tracks whether the current turn has been aborted via Esc, so the
@@ -359,6 +542,7 @@ export function App({
     codeShowEdit,
     sealCurrentEntry,
     hasUndoable,
+    touchedPaths,
   } = useEditHistory(codeMode);
   // Pending edit blocks awaiting `/apply` or `/discard`. We do NOT
   // auto-apply — v0.4.1 showed that "model proposed, so apply" turns
@@ -600,6 +784,14 @@ export function App({
   // callbacks; the slash handler uses getDashboardUrl() to surface
   // the current state without triggering re-renders on every poll.
   const dashboardRef = useRef<DashboardServerHandle | null>(null);
+  // De-dupe concurrent startDashboard() invocations. Without this, when
+  // the auto-start useEffect re-fires (because `startDashboard`'s
+  // useCallback deps change mid-mount) the early `if (dashboardRef.current)
+  // return` check sees null because the first call hasn't returned from
+  // its `await startDashboardServer()` yet — so we'd start two listeners
+  // on two ports, leak the first handle, and make the chrome pill flicker
+  // between two URLs. Hold the in-flight Promise here and reuse it.
+  const dashboardStartingRef = useRef<Promise<string> | null>(null);
   // SSE subscribers attached by /api/events. App.tsx fans out one
   // DashboardEvent per loop event so the web Chat tab updates in
   // sync with the TUI. The Set is keyed by the subscriber function
@@ -1212,6 +1404,55 @@ export function App({
       // hotkey logic over it (a `\n` in paste shouldn't fire submit).
       return;
     }
+    // Log-scroll keys + mouse wheel — fire ahead of any PromptInput
+    // consumption so the user can read history while the input is
+    // focused. Step sizes are intentionally small so every wheel
+    // click moves the log by ONE turn, not a full page — chat apps
+    // feel jerky when one notch hides three messages. PageUp / Down
+    // jump by ~3 events for keyboard-first users who want bigger
+    // strides; Home / End anchor with a smooth glide.
+    // Max scroll-up offset = length - 1 so at least the very first
+    // event stays visible. With < 2 events there's nothing to scroll
+    // through; the keys / wheel become no-ops.
+    const maxOffset = Math.max(0, historical.length - 1);
+    if (ev.mouseScrollUp) {
+      if (maxOffset === 0) return;
+      animateScrollTo((prev) => Math.min(maxOffset, prev + 1));
+      return;
+    }
+    if (ev.mouseScrollDown) {
+      if (maxOffset === 0) return;
+      animateScrollTo((prev) => Math.max(0, prev - 1));
+      return;
+    }
+    if (ev.pageUp) {
+      if (maxOffset === 0) return;
+      animateScrollTo((prev) => Math.min(maxOffset, prev + 3));
+      return;
+    }
+    if (ev.pageDown) {
+      if (maxOffset === 0) return;
+      animateScrollTo((prev) => Math.max(0, prev - 3));
+      return;
+    }
+    if (ev.home) {
+      if (maxOffset === 0) return;
+      animateScrollTo(() => maxOffset);
+      return;
+    }
+    if (ev.end) {
+      if (maxOffset === 0) return;
+      animateScrollTo(() => 0);
+      return;
+    }
+    // Mouse click events are intentionally ignored — having the app
+    // intercept clicks fights the user's text-selection workflow
+    // (which most terminals route through the same mouse-tracking
+    // channel). Wheel events still work for scrolling. To copy
+    // text, hold Shift while dragging — that bypasses the mouse-
+    // tracking layer in iTerm2 / Windows Terminal / WezTerm /
+    // gnome-terminal / VS Code's integrated terminal. End / Home
+    // keys cover the "jump to latest" UX without the click hazard.
     // Ctrl+C → exit. Always. Same target as the SIGINT path above —
     // whichever route delivers Ctrl+C on the user's terminal wins.
     if (key.ctrl && key.input === "c") {
@@ -1726,6 +1967,8 @@ export function App({
   // in-flight requests within a 1s grace window.
   const startDashboard = useCallback(async (): Promise<string> => {
     if (dashboardRef.current) return dashboardRef.current.url;
+    if (dashboardStartingRef.current) return dashboardStartingRef.current;
+    const startup = (async () => {
     const handle = await startDashboardServer({
       mode: "attached",
       configPath: defaultConfigPath(),
@@ -1964,6 +2207,13 @@ export function App({
     dashboardRef.current = handle;
     setDashboardUrlState(handle.url);
     return handle.url;
+    })();
+    dashboardStartingRef.current = startup;
+    try {
+      return await startup;
+    } finally {
+      dashboardStartingRef.current = null;
+    }
   }, [
     loop,
     tools,
@@ -2014,8 +2264,21 @@ export function App({
   useEffect(() => {
     if (noDashboard) return;
     if (dashboardRef.current) return;
-    startDashboard().catch(() => {
-      /* silent — TUI keeps working without the dashboard */
+    startDashboard().catch((err) => {
+      // Auto-start failure surfaces as a visible warn row. The URL
+      // itself is shown on the welcome card (when the server is up),
+      // so silence here would leave the user with no way to know the
+      // web UI is unreachable — port already in use, permission
+      // denied, etc. Don't block the TUI; everything else keeps working.
+      const reason = err instanceof Error ? err.message : String(err);
+      setHistorical((prev) => [
+        ...prev,
+        {
+          id: `dash-fail-${Date.now()}`,
+          role: "info",
+          text: `▲ dashboard auto-start failed (${reason}) — try /dashboard, or pass --no-dashboard to silence`,
+        },
+      ]);
     });
   }, [noDashboard, startDashboard]);
 
@@ -2296,6 +2559,17 @@ export function App({
           clearPendingPlan: codeMode ? clearPendingPlan : undefined,
           editMode: codeMode ? editMode : undefined,
           setEditMode: codeMode ? setEditMode : undefined,
+          touchedFiles: codeMode
+            ? () => {
+                // Union of (files in completed/undone edit batches) +
+                // (paths queued in pendingEdits awaiting /apply). Both
+                // represent surface area the user might want to roll
+                // back later.
+                const set = new Set<string>(touchedPaths());
+                for (const b of pendingEdits.current) set.add(b.path);
+                return [...set];
+              }
+            : undefined,
           armPro: () => {
             loop.armProForNextTurn();
             setProArmed(true);
@@ -2377,14 +2651,30 @@ export function App({
           return;
         }
         if (result.info) {
-          setHistorical((prev) => [
-            ...prev,
-            {
-              id: `sys-${Date.now()}`,
-              role: "info",
-              text: result.info!,
-            },
-          ]);
+          // /context returns a structured ctxBreakdown payload; push as
+          // a ctx-breakdown DisplayEvent so EventLog renders the
+          // 4-color stacked char-bar. Other slashes fall through to
+          // the plain "info" path.
+          if (result.ctxBreakdown) {
+            setHistorical((prev) => [
+              ...prev,
+              {
+                id: `ctx-${Date.now()}`,
+                role: "ctx-breakdown",
+                text: result.info!,
+                ctxBreakdown: result.ctxBreakdown,
+              },
+            ]);
+          } else {
+            setHistorical((prev) => [
+              ...prev,
+              {
+                id: `sys-${Date.now()}`,
+                role: "info",
+                text: result.info!,
+              },
+            ]);
+          }
         }
         // /replay returns a structured archive snapshot. Push it as a
         // plan-replay DisplayEvent so EventLog renders the same step
@@ -3905,10 +4195,24 @@ export function App({
           !!stagedCheckpointRevise ||
           !!pendingChoice ||
           !!stagedChoiceCustom ||
-          !!pendingRevision
+          !!pendingRevision ||
+          // Idle gate: when nothing is actively happening, suspend the
+          // 8Hz/1Hz heartbeats. The cursor blink, gradient pulse, and
+          // spinner glyphs are pure cosmetics — running them at idle
+          // forces Ink to repaint the screen ~8x/sec, which erases any
+          // text selection the user has made in the terminal. With the
+          // ticker paused, an idle TUI is byte-stable and shift-drag /
+          // click-drag selections survive until something actually
+          // changes (incoming stream, key press, modal popup).
+          (!busy && !streaming)
         }
       >
-        <Box flexDirection="column">
+        <Box
+          flexDirection="column"
+          height={stdout?.rows ?? 30}
+          width={stdout?.columns ?? 80}
+          overflow="hidden"
+        >
           <StatsPanel
             summary={summary}
             model={loop.model}
@@ -3923,12 +4227,84 @@ export function App({
             updateAvailable={updateAvailable}
             proArmed={proArmed}
             escalated={turnOnPro}
-            dashboardUrl={dashboardUrl}
             budgetUsd={loop.budgetUsd}
+            rootDir={codeMode ? currentRootDir : undefined}
+            sessionName={session ?? null}
           />
-          <Static items={historical}>
-            {(item) => <EventRow key={item.id} event={item} projectRoot={currentRootDir} />}
-          </Static>
+          {/* SCROLLABLE LOG REGION — historical events render inline
+              (no Static, since alt-screen kills scrollback anyway).
+              EXPLICIT height instead of `flexGrow={1}` so the height
+              is deterministic and doesn't depend on the row-estimator
+              being correct. `overflow="hidden"` clips overflowing
+              children so the StatsPanel + prompt block above and
+              below stay anchored.
+              Height shrinks toward 0 when a modal is active — the
+              modal needs the screen real estate; conversation context
+              behind a confirm dialog is rarely useful, and rendering
+              both fights for the same vertical space. */}
+          <Box
+            flexDirection="column"
+            height={
+              pendingShell ||
+              pendingWorkspace ||
+              pendingPlan ||
+              pendingEditReview ||
+              pendingCheckpoint ||
+              stagedCheckpointRevise ||
+              stagedInput ||
+              stagedChoiceCustom ||
+              pendingChoice ||
+              pendingRevision ||
+              walkthroughActive
+                ? 0
+                : Math.max(5, (stdout?.rows ?? 30) - 9)
+            }
+            overflow="hidden"
+          >
+            {(() => {
+              const visible = sliceVisibleEvents(
+                historical,
+                stdout?.rows ?? 30,
+                logScrollOffset,
+              );
+              // Count of events ABOVE the visible window (older).
+              // visible.length is the exact slice; the start index is
+              // events.length - logScrollOffset - visible.length.
+              const aboveCount = Math.max(
+                0,
+                historical.length - logScrollOffset - visible.length,
+              );
+              const belowCount = logScrollOffset;
+              return (
+                <>
+                  {aboveCount > 0 ? (
+                    <Box>
+                      <Text color={COLOR.info} dimColor>
+                        ↑
+                      </Text>
+                      <Text dimColor>
+                        {`  ${aboveCount} event${aboveCount === 1 ? "" : "s"} above  ·  PgUp / wheel-up to scroll`}
+                      </Text>
+                    </Box>
+                  ) : null}
+                  {visible.map((item) => (
+                    <EventRow key={item.id} event={item} projectRoot={currentRootDir} />
+                  ))}
+                  {belowCount > 0 ? (
+                    <Box marginTop={1}>
+                      <Text color={COLOR.primary} bold>
+                        ↓
+                      </Text>
+                      <Text>{"  "}</Text>
+                      <Text color={COLOR.primary}>
+                        {`${belowCount} event${belowCount === 1 ? "" : "s"} below`}
+                      </Text>
+                      <Text dimColor>{"  · End / click here / wheel-down to jump"}</Text>
+                    </Box>
+                  ) : null}
+                </>
+              );
+            })()}
           {/*
           Welcome card on the empty state. Visible only when nothing
           has happened yet (no past events, nothing in flight, no
@@ -3938,7 +4314,7 @@ export function App({
           {!historical.some((e) => e.role === "user" || e.role === "assistant") &&
           !busy &&
           !streaming ? (
-            <WelcomeBanner inCodeMode={!!codeMode} />
+            <WelcomeBanner inCodeMode={!!codeMode} dashboardUrl={dashboardUrl} />
           ) : null}
           {/*
           Live rows are hidden while the ShellConfirm modal is up — the
@@ -4030,6 +4406,10 @@ export function App({
           !statusLine ? (
             <StatusRow text="processing…" />
           ) : null}
+          </Box>
+          {/* STICKY BOTTOM — either an active modal (replaces prompt
+              for the duration of the confirm) or the input + suggestion
+              area. Always pinned to the last rows of the viewport. */}
           {stagedInput ? (
             <PlanRefineInput
               mode={stagedInput.mode}

@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import React from "react";
 import { ModalCard } from "./ModalCard.js";
 import { SingleSelect } from "./Select.js";
+import { COLOR } from "./theme.js";
 
 export type ShellConfirmChoice = "run_once" | "always_allow" | "deny";
 
@@ -40,16 +41,16 @@ export function ShellConfirm({ command, allowPrefix, kind, onChoose }: ShellConf
     : "model wants to run a shell command";
   return (
     <ModalCard
-      accent="#f87171"
+      accent={COLOR.err}
       icon={isBackground ? "⏱" : "⚡"}
       title={isBackground ? "background process" : "shell command"}
       subtitle={subtitle}
     >
       <Box marginBottom={1}>
-        <Text dimColor>{"$ "}</Text>
-        <Text color="#67e8f9" bold>
-          {command}
+        <Text color={COLOR.primary} bold>
+          {"$ "}
         </Text>
+        <Text bold>{command}</Text>
       </Box>
       <SingleSelect
         initialValue="run_once"
@@ -72,7 +73,7 @@ export function ShellConfirm({ command, allowPrefix, kind, onChoose }: ShellConf
         ]}
         onSubmit={(v) => onChoose(v as ShellConfirmChoice)}
         onCancel={() => onChoose("deny")}
-        footer="[↑↓] navigate  ·  [Enter] select  ·  [Esc] deny"
+        footer="↑↓ navigate · ⏎ select · esc deny"
       />
     </ModalCard>
   );
