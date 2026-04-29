@@ -4242,8 +4242,13 @@ export function App({
                 overflow="hidden"
               >
                 {(() => {
-                  const reservedRows = 10;
-                  const available = Math.max(8, (stdout?.rows ?? 30) - reservedRows);
+                  // Single source of truth for "rows the log can render".
+                  // Matches the parent flex container's height (set below
+                  // and by ScrollBar). When BottomHint is visible we
+                  // shrink by 1 so the slicer doesn't claim a row that's
+                  // actually taken by the hint.
+                  const logHeight = Math.max(5, (stdout?.rows ?? 30) - 9);
+                  const available = Math.max(4, logHeight - (logScrollOffset > 0 ? 1 : 0));
                   const cols = stdout?.columns ?? 80;
                   // Build atom list across all events, slice by row range.
                   // Migrated roles produce `frame` atoms (row-precise clip
@@ -4369,9 +4374,17 @@ export function App({
                 fills synchronously inside the IIFE above, so the thumb
                 is always in sync with what's just been rendered. */}
             <ScrollBar
+              // Height matches the parent log column (rows - 9).
+              // viewportRows mirrors the slicer's "available" so thumb
+              // math, log slice, and bar cell count all use the same
+              // number — no off-by-one drift between thumb position
+              // and visible content.
               height={Math.max(5, (stdout?.rows ?? 30) - 9)}
               totalRows={lastTotalRowsRef.current}
-              viewportRows={Math.max(8, (stdout?.rows ?? 30) - 10)}
+              viewportRows={Math.max(
+                4,
+                Math.max(5, (stdout?.rows ?? 30) - 9) - (logScrollOffset > 0 ? 1 : 0),
+              )}
               scrollOffsetRows={logScrollOffset}
             />
           </Box>
