@@ -69,39 +69,79 @@ describe("eventToAtom — warning / error", () => {
 });
 
 describe("eventToAtom — fallback to ink", () => {
-  it("plan role falls back to ink atom", () => {
-    const a = eventToAtom({ id: "p1", role: "plan", text: "..." }, undefined, W);
-    expect(a.kind).toBe("ink");
-  });
-  it("assistant with reasoning falls back to ink atom", () => {
+  it("streaming assistant falls back to ink atom", () => {
     const a = eventToAtom(
-      { id: "a1", role: "assistant", text: "hi", reasoning: "thinking..." },
+      { id: "s1", role: "assistant", text: "...", streaming: true } as DisplayEvent,
       undefined,
       W,
     );
     expect(a.kind).toBe("ink");
   });
-  it("ctx-breakdown falls back to ink atom", () => {
+  it("plan-replay falls back to ink atom", () => {
+    const a = eventToAtom(
+      { id: "pr1", role: "plan-replay", text: "..." } as DisplayEvent,
+      undefined,
+      W,
+    );
+    expect(a.kind).toBe("ink");
+  });
+  it("plan-resumed falls back to ink atom", () => {
+    const a = eventToAtom(
+      { id: "ps1", role: "plan-resumed", text: "..." } as DisplayEvent,
+      undefined,
+      W,
+    );
+    expect(a.kind).toBe("ink");
+  });
+});
+
+describe("eventToAtom — complex assistant", () => {
+  it("assistant with reasoning produces a frame atom", () => {
+    const a = eventToAtom(
+      { id: "a1", role: "assistant", text: "hi", reasoning: "thinking..." } as DisplayEvent,
+      undefined,
+      W,
+    );
+    expect(a.kind).toBe("frame");
+    if (a.kind !== "frame") return;
+    expect(a.frame.rows.length).toBeGreaterThan(3);
+  });
+});
+
+describe("eventToAtom — plan", () => {
+  it("plan role produces a frame atom with header", () => {
+    const a = eventToAtom({ id: "p1", role: "plan", text: "step 1\nstep 2" }, undefined, W);
+    expect(a.kind).toBe("frame");
+    if (a.kind !== "frame") return;
+    const allText = a.frame.rows.map(rowText).join("\n");
+    expect(allText).toContain("plan proposed");
+  });
+});
+
+describe("eventToAtom — ctx-breakdown", () => {
+  it("ctx-breakdown produces a frame atom with bar + legend", () => {
     const a = eventToAtom(
       {
         id: "c1",
         role: "ctx-breakdown",
         text: "",
         ctxBreakdown: {
-          ratio: 0.5,
-          sysTokens: 0,
-          prefixTokens: 0,
-          repairTokens: 0,
-          turnTokens: 0,
-          ctxMax: 1,
-          model: "x",
-          legend: [],
+          systemTokens: 1000,
+          toolsTokens: 2000,
+          logTokens: 3000,
+          inputTokens: 500,
+          toolsCount: 5,
+          ctxMax: 8000,
         },
       } as DisplayEvent,
       undefined,
       W,
     );
-    expect(a.kind).toBe("ink");
+    expect(a.kind).toBe("frame");
+    if (a.kind !== "frame") return;
+    const allText = a.frame.rows.map(rowText).join("\n");
+    expect(allText).toContain("context");
+    expect(allText).toContain("system");
   });
 });
 
@@ -224,10 +264,10 @@ describe("viewportLog — basic slicing", () => {
 
 describe("viewportLog — mixed frame + ink atoms", () => {
   it("snaps at ink atom boundaries (no row-precise topSkip)", () => {
-    // 1-row info + ink-fallback (plan role, ~10 rows) + 1-row info
+    // 1-row info + ink-fallback (plan-replay, ~10 rows) + 1-row info
     const atoms = [
       eventToAtom(infoEvent("first", "i0"), undefined, W),
-      eventToAtom({ id: "p0", role: "plan", text: "..." } as DisplayEvent, undefined, W),
+      eventToAtom({ id: "pr0", role: "plan-replay", text: "..." } as DisplayEvent, undefined, W),
       eventToAtom(infoEvent("last", "i1"), undefined, W),
     ];
     // Viewport = 4 rows, offset = 0 → last 4 rows: tail of ink + last info

@@ -57,9 +57,18 @@ import {
   text,
   vstack,
 } from "../../frame/index.js";
+import { type TypedPlanState, isPlanStateEmpty } from "../../harvest.js";
+import type { BranchSummary } from "../../loop.js";
 import { type DisplayEvent, EventRow } from "./EventLog.js";
 import { COLOR, GLYPH, gradientCells } from "./theme.js";
 import { formatDuration, summarizeToolResult } from "./tool-summary.js";
+
+/** 1.2K / 128K formatter — matches the StatsPanel and EventLog style. */
+function formatTokensCompact(n: number): string {
+  if (n < 1024) return String(n);
+  const k = n / 1024;
+  return k >= 100 ? `${k.toFixed(0)}K` : `${k.toFixed(1)}K`;
+}
 
 const ROLE_GLYPH = {
   user: "◇",
@@ -477,6 +486,302 @@ function editFileDiffFrame(event: DisplayEvent, width: number): Frame {
   return borderLeft(pad(inner, 0, 0, 0, 1), COLOR.tool);
 }
 
+/**
+ * Frame for R1 reasoning preview block. Shows a meta-line with token
+ * estimate + footer hint (`/think for full`) and a violet-bordered
+ * preview of the trailing 260 chars of reasoning. Mirrors the legacy
+ * `<ReasoningBlock>`.
+ */
+function reasoningFrame(reasoning: string, width: number): Frame {
+  const max = 260;
+  const flat = reasoning.replace(/\s+/g, " ").trim();
+  const preview =
+    flat.length <= max ? flat : `… (+${flat.length - max} earlier chars) ${flat.slice(-max)}`;
+  const tokensApprox = Math.max(1, Math.round(flat.length / 4.5));
+  const tokLabel =
+    tokensApprox >= 1000 ? `${(tokensApprox / 1000).toFixed(1)}k` : `${tokensApprox}`;
+  const header = rowFrame(
+    [
+      text("R1 ↯", { width: 5, fg: COLOR.accent, bold: true }),
+      text(`  reasoning · ~${tokLabel} tok · /think for full`, {
+        width: 28 + tokLabel.length,
+        dim: true,
+      }),
+    ],
+    width,
+  );
+  const previewBody = pad(
+    text(preview, { width: width - 2, fg: COLOR.accent, italic: true, dim: true }),
+    0,
+    0,
+    0,
+    1,
+  );
+  const previewBordered = borderLeft(previewBody, COLOR.accent);
+  // marginBottom={1} — append a blank row.
+  const trail = text("", { width });
+  return vstack(header, previewBordered, trail);
+}
+
+/**
+ * Frame for branch summary header + per-branch uncertainty list.
+ * Matches `<BranchBlock>` — pill header + `▸ #N T=X u=description`
+ * lines indented by 2.
+ */
+function branchFrame(branch: BranchSummary, width: number): Frame {
+  const pill = rowFrame(
+    [
+      text(` ⎇ BRANCH ×${branch.budget} `, {
+        width: 12 + String(branch.budget).length,
+        bg: "#93c5fd",
+        fg: "black",
+        bold: true,
+      }),
+      text("  ", { width: 2 }),
+      text("picked ", { width: 7, fg: "#93c5fd" }),
+      text(`#${branch.chosenIndex}`, {
+        width: 1 + String(branch.chosenIndex).length,
+        fg: "#93c5fd",
+        bold: true,
+      }),
+    ],
+    width,
+  );
+  const items: Frame[] = [];
+  for (let i = 0; i < branch.uncertainties.length; i++) {
+    const u = branch.uncertainties[i]!;
+    const chosen = i === branch.chosenIndex;
+    const t = (branch.temperatures[i] ?? 0).toFixed(1);
+    items.push(
+      pad(
+        rowFrame(
+          [
+            text(chosen ? "▸ " : "  ", {
+              width: 2,
+              fg: chosen ? "#93c5fd" : "#475569",
+              bold: chosen,
+            }),
+            text(`#${i}`, {
+              width: 1 + String(i).length,
+              fg: chosen ? "#93c5fd" : "#94a3b8",
+              bold: chosen,
+            }),
+            text(` T=${t}  u=${u}`, {
+              width: width - 2 - 1 - String(i).length,
+              dim: true,
+            }),
+          ],
+          width - 2,
+        ),
+        0,
+        0,
+        0,
+        2,
+      ),
+    );
+  }
+  // marginBottom={1}
+  const trail = text("", { width });
+  return vstack(pill, ...items, trail);
+}
+
+/**
+ * Frame for typed plan-state block: 1 row per non-empty field with
+ * bold colored label + count + items joined by `·`.
+ */
+function planStateFrame(planState: TypedPlanState, width: number): Frame {
+  const fields: Array<[string, string[], string, boolean]> = [];
+  if (planState.subgoals.length)
+    fields.push(["subgoals", planState.subgoals, COLOR.primary, false]);
+  if (planState.hypotheses.length)
+    fields.push(["hypotheses", planState.hypotheses, COLOR.assistant, false]);
+  if (planState.uncertainties.length)
+    fields.push(["uncertainties", planState.uncertainties, COLOR.warn, false]);
+  if (planState.rejectedPaths.length)
+    fields.push(["rejected", planState.rejectedPaths, COLOR.info, true]);
+  if (fields.length === 0) return empty(width);
+  const rows: Frame[] = fields.map(([label, items, color, dim]) => {
+    const header = `${label} (${items.length})  · `;
+    const itemsStr = items.join(" · ");
+    return rowFrame(
+      [
+        text(label, { width: label.length, fg: color, bold: true, dim }),
+        text(` (${items.length})  · `, { width: 7 + String(items.length).length, dim: true }),
+        text(itemsStr, {
+          width: Math.max(8, width - header.length),
+          fg: dim ? undefined : COLOR.info,
+          dim,
+        }),
+      ],
+      width,
+    );
+  });
+  const trail = text("", { width });
+  return vstack(...rows, trail);
+}
+
+/**
+ * Frame for `/context` token-usage breakdown: 4-color stacked
+ * char-bar across 48 cells + legend with per-category counts.
+ * Mirrors `<CtxBreakdownBlock>`.
+ */
+function ctxBreakdownFrame(data: NonNullable<DisplayEvent["ctxBreakdown"]>, width: number): Frame {
+  const total = data.systemTokens + data.toolsTokens + data.logTokens + data.inputTokens;
+  const winPct = data.ctxMax > 0 ? Math.round((total / data.ctxMax) * 100) : 0;
+  const barWidth = 48;
+  const cellOf = (n: number) => (data.ctxMax > 0 ? Math.round((n / data.ctxMax) * barWidth) : 0);
+  const sysCells = cellOf(data.systemTokens);
+  const toolsCells = cellOf(data.toolsTokens);
+  const logCells = cellOf(data.logTokens);
+  const inputCells = cellOf(data.inputTokens);
+  const used = sysCells + toolsCells + logCells + inputCells;
+  const freeCells = Math.max(0, barWidth - used);
+  const sevColor = winPct >= 80 ? COLOR.err : winPct >= 60 ? COLOR.warn : COLOR.ok;
+  const innerWidth = width - 2;
+
+  // Header row
+  const headerSegments: Frame[] = [
+    text("▣ context", { width: 9, fg: COLOR.brand, bold: true }),
+    text(`  ${formatTokensCompact(total)} of ${formatTokensCompact(data.ctxMax)}`, {
+      width: 4 + formatTokensCompact(total).length + formatTokensCompact(data.ctxMax).length,
+      dim: true,
+    }),
+    text("  ·  ", { width: 5, dim: true }),
+    text(`${winPct}%`, { width: 1 + String(winPct).length, fg: sevColor, bold: true }),
+  ];
+  if (winPct >= 80) {
+    headerSegments.push(text("  ·  /compact", { width: 13, fg: COLOR.err, bold: true }));
+  }
+  const header = rowFrame(headerSegments, innerWidth);
+
+  // Bar row — 4 colored segments + dim free
+  const bar = rowFrame(
+    [
+      text("█".repeat(sysCells), { width: sysCells, fg: COLOR.brand }),
+      text("█".repeat(toolsCells), { width: toolsCells, fg: COLOR.accent }),
+      text("█".repeat(logCells), { width: logCells, fg: COLOR.primary }),
+      text("█".repeat(inputCells), { width: inputCells, fg: COLOR.tool }),
+      text("░".repeat(freeCells), { width: freeCells, fg: COLOR.info, dim: true }),
+    ],
+    innerWidth,
+  );
+
+  // Legend row
+  const legend = rowFrame(
+    [
+      text("■", { width: 1, fg: COLOR.brand }),
+      text(` system ${formatTokensCompact(data.systemTokens)}`, {
+        width: 8 + formatTokensCompact(data.systemTokens).length,
+        dim: true,
+      }),
+      text("   ", { width: 3 }),
+      text("■", { width: 1, fg: COLOR.accent }),
+      text(` tools ${formatTokensCompact(data.toolsTokens)}`, {
+        width: 7 + formatTokensCompact(data.toolsTokens).length,
+        dim: true,
+      }),
+      text("   ", { width: 3 }),
+      text("■", { width: 1, fg: COLOR.primary }),
+      text(` log ${formatTokensCompact(data.logTokens)}`, {
+        width: 5 + formatTokensCompact(data.logTokens).length,
+        dim: true,
+      }),
+      text("   ", { width: 3 }),
+      text("■", { width: 1, fg: COLOR.tool }),
+      text(` input ${formatTokensCompact(data.inputTokens)}`, {
+        width: 7 + formatTokensCompact(data.inputTokens).length,
+        dim: true,
+      }),
+    ],
+    innerWidth,
+  );
+
+  const inner = vstack(header, bar, legend);
+  // marginY={1} = blank row above + below
+  const spacer = text("", { width });
+  return vstack(spacer, borderLeft(pad(inner, 0, 0, 0, 1), COLOR.brand), spacer);
+}
+
+/**
+ * Frame for the COMPLEX assistant turn — branch / reasoning /
+ * planState sub-blocks composed into one bordered body, followed by
+ * markdown body (rendered as plain text — full markdown→Frame
+ * compilation is a future phase), stats, repair.
+ */
+function complexAssistantFrame(event: DisplayEvent, width: number): Frame {
+  const spacer = text("", { width });
+  // Header row
+  const headerSegs: Frame[] = [text("◆", { width: 1, fg: COLOR.assistant, bold: true })];
+  if (event.stats) {
+    const modelName = event.stats.model.replace(/^deepseek-/, "");
+    headerSegs.push(
+      text("  ", { width: 2 }),
+      text(` ${modelName} `, {
+        width: 2 + modelName.length,
+        bg: COLOR.assistant,
+        fg: "black",
+        bold: true,
+      }),
+    );
+  }
+  const header = rowFrame(headerSegs, width);
+  // Body sub-blocks (composed inside the bordered column)
+  const bodyParts: Frame[] = [];
+  const bodyWidth = width - 2; // bar + pad
+  if (event.branch) {
+    bodyParts.push(branchFrame(event.branch, bodyWidth));
+  }
+  if (event.reasoning) {
+    bodyParts.push(reasoningFrame(event.reasoning, bodyWidth));
+  }
+  if (event.planState && !isPlanStateEmpty(event.planState)) {
+    bodyParts.push(planStateFrame(event.planState, bodyWidth));
+  }
+  // Body text — plain (no markdown for now). Lossy: code blocks /
+  // bold spans render as plain. Trade for row-precise scrolling.
+  const bodyText = event.text || "(empty body — likely tool-call only)";
+  const bodyDim = !event.text;
+  bodyParts.push(text(bodyText, { width: bodyWidth, fg: COLOR.assistant, dim: bodyDim }));
+  // Stats line
+  if (event.stats) {
+    const hit = (event.stats.cacheHitRatio * 100).toFixed(1);
+    const hitColor =
+      event.stats.cacheHitRatio >= 0.7
+        ? "#4ade80"
+        : event.stats.cacheHitRatio >= 0.4
+          ? "#fcd34d"
+          : "#f87171";
+    const statsLine = `⌬ ${hit}%  ·  in ${event.stats.usage.promptTokens} → out ${event.stats.usage.completionTokens}  ·  $${event.stats.cost.toFixed(6)}`;
+    bodyParts.push(text(statsLine, { width: bodyWidth, fg: hitColor }));
+  }
+  // Repair note
+  if (event.repair) {
+    bodyParts.push(text(event.repair, { width: bodyWidth, fg: COLOR.accent }));
+  }
+  const inner = vstack(...bodyParts);
+  const bordered = borderLeft(pad(inner, 0, 0, 0, 1), COLOR.assistant);
+  return vstack(spacer, header, spacer, bordered);
+}
+
+/**
+ * Frame for `plan` events. Header bar + plain-text body (markdown
+ * rendering is deferred — for now, the `plan` body is shown as
+ * unformatted text so users can scroll through it row-by-row).
+ */
+function planFrame(event: DisplayEvent, width: number): Frame {
+  const header = text("📋 plan proposed — pick a choice below", {
+    width: 39,
+    fg: "cyan",
+    bold: true,
+  });
+  const headerPadded = rowFrame([header], width);
+  const body = text(event.text, { width: width - 2 });
+  const inner = vstack(headerPadded, text("", { width }), pad(body, 0, 0, 0, 1));
+  // marginY={1} on outer
+  const spacer = text("", { width });
+  return vstack(spacer, inner, spacer);
+}
+
 // ─── public surface ──────────────────────────────────────────────
 
 /**
@@ -520,14 +825,25 @@ export function eventToAtom(
   }
   if (event.role === "assistant" && !event.streaming) {
     const hasComplexSub =
-      event.branch ||
-      event.reasoning ||
-      (event.planState && Object.keys(event.planState).length > 0);
-    if (!hasComplexSub) {
-      return { kind: "frame", id: event.id, frame: simpleAssistantFrame(event, width) };
+      event.branch || event.reasoning || (event.planState && !isPlanStateEmpty(event.planState));
+    if (hasComplexSub) {
+      return { kind: "frame", id: event.id, frame: complexAssistantFrame(event, width) };
     }
+    return { kind: "frame", id: event.id, frame: simpleAssistantFrame(event, width) };
   }
-  // Fall back to legacy Ink rendering for roles we haven't migrated.
+  if (event.role === "plan") {
+    return { kind: "frame", id: event.id, frame: planFrame(event, width) };
+  }
+  if (event.role === "ctx-breakdown" && event.ctxBreakdown) {
+    return {
+      kind: "frame",
+      id: event.id,
+      frame: ctxBreakdownFrame(event.ctxBreakdown, width),
+    };
+  }
+  // Fall back to legacy Ink rendering for roles we haven't migrated
+  // (currently: streaming assistant, plan-replay, plan-resumed; the
+  // remaining inkblocks are all transient or rare turn-state events).
   return {
     kind: "ink",
     id: event.id,
