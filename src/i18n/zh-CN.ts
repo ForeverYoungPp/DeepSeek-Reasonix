@@ -45,6 +45,10 @@ export const zhCN: TranslationSchema = {
     applied: "已应用",
     rejected: "已拒绝",
     noDashboard: "禁止自动启动嵌入式 Web 仪表板。",
+    dashboardPortHint:
+      "将仪表板绑定到固定端口 (1–65535)。重启后保持稳定 — SSH 隧道访问必需。默认为临时端口。",
+    dashboardPortInvalid:
+      "▲ 忽略 --dashboard-port={value} (必须为 1–65535 之间的整数) — 回退到临时端口",
     dashboardAutoStartFailed:
       "▲ 仪表板自动启动失败 ({reason}) — 尝试 /dashboard，或传递 --no-dashboard 以静默",
     systemAppendHint: "追加指令到代码系统提示词。不替换默认提示词 — 在其后添加。",
@@ -417,6 +421,16 @@ export const zhCN: TranslationSchema = {
     savedFooter: "[Enter] 退出",
     selectFooter: "[↑↓] 移动 · [Enter] 确认 · [Esc] 取消",
     stepCounter: "步骤 {step}/{total} · ",
+    exitHint: "/exit 中止",
+    apiKeyPlaceholder: "sk-...",
+    themeSampleReasoning: "推理中",
+  },
+  themePicker: {
+    header: "主题",
+    footer: "↑↓ 选择 · ⏎ 确认 · Esc 取消",
+    currentPref: "当前偏好",
+    activeNow: "当前生效",
+    autoDesc: "使用 REASONIX_THEME 或默认主题",
   },
   planFlow: {
     approveCardTitle: "确认计划",
@@ -480,6 +494,9 @@ export const zhCN: TranslationSchema = {
       counterDone: "{done}/{total} 已完成（{pct}%） · 共 {total} 步",
       counterDoneSingular: "{done}/{total} 已完成（{pct}%） · 共 {total} 步",
     },
+    reviseTitle: "修改计划",
+    reviseSteps: "{count} 个步骤",
+    reviseFooter: "↑↓ 焦点  ·  空格切换跳过  ·  k/j 移动  ·  ⏎ 确认  ·  Esc 取消",
   },
   app: {
     walkCancelledRemaining: "▸ 浏览已取消 — 还有 {count} 个待处理编辑块。",
@@ -640,6 +657,8 @@ export const zhCN: TranslationSchema = {
       loopStarted:
         '▸ 循环已启动 — 每 {duration} 重新提交 "{prompt}"。输入任何内容（或 /loop stop）取消。',
       keysNeedsTui: "/keys 需要 TUI 上下文（postKeys 已连接）。",
+      unknownCommand: "未知命令：/{cmd} — 你是不是想用 {list}？",
+      unknownCommandShort: "未知命令：/{cmd}  （试试 /help）",
     },
     admin: {
       doctorNeedsTui: "/doctor 需要 TUI 上下文（postDoctor 已连接）。",
@@ -846,6 +865,15 @@ export const zhCN: TranslationSchema = {
       archivedRow: "  ✓ {when}  {total}步 · {completion}  {label}",
       completionComplete: "已完成",
       stopAborted: "▸ 计划已停止 — 模型已中止；输入后续内容继续，或开始新任务。",
+      doneUsage:
+        "用法：/plans done <stepId>  ·  /plans done all — 模型忘记调用 mark_step_complete 时的手动兜底",
+      doneUnavailable: "/plans done 仅在活跃会话内可用。",
+      doneNoPlan: "当前无活跃计划 — 没有可标记的内容。",
+      doneNotInPlan: "步骤 `{id}` 不在当前计划中。运行 /plans 查看步骤 id。",
+      doneAlready: "步骤 `{id}` 已被标记为完成。",
+      doneOk: "▸ 已将步骤 `{id}` 标记为完成。",
+      doneAllNoop: "所有步骤均已完成。",
+      doneAllOk: "▸ 已标记 {count} 个步骤为完成。",
     },
     jobs: {
       codeOnly: "/jobs 仅在 `reasonix code` 中可用。",
@@ -920,6 +948,9 @@ export const zhCN: TranslationSchema = {
       unknownServer: '未知 MCP 服务器 "{name}"。已知：{list}。',
       noneList: "（无）",
       reconnectNoTui: "/mcp reconnect 需要交互式 TUI（postInfo 未连接）。",
+      liveTab: "已连接",
+      marketplaceTab: "市场",
+      tabHint: "按 tab 切换",
     },
     init: {
       codeOnly:
@@ -979,6 +1010,7 @@ export const zhCN: TranslationSchema = {
     recordingGlyph: "●REC",
     mb: " MB",
     evt: " 事件",
+    editsLabel: "编辑:",
   },
   editMode: {
     plan: "计划",
@@ -1004,6 +1036,8 @@ export const zhCN: TranslationSchema = {
     hintAbort: "中止",
     hintQuit: "退出",
     abortedHint: "用户已中止本轮 · 再按 Esc 清除 · ⏎ 继续提问",
+    editorNoRawMode: "外部编辑器不可用 — 当前终端不支持 raw-mode 切换",
+    editorFailed: "外部编辑器：",
   },
   shellConfirm: {
     title: "Shell 命令",
@@ -1021,6 +1055,9 @@ export const zhCN: TranslationSchema = {
     allowAlwaysDesc: "记住 `{prefix}`，本项目内不再询问",
     deny: "拒绝",
     denyDesc: "按 Tab 添加说明，告诉模型原因",
+    cwdLabel: "工作目录",
+    timeoutLabel: "超时",
+    waitLabel: "等待",
   },
   editConfirm: {
     footer:
@@ -1083,6 +1120,14 @@ export const zhCN: TranslationSchema = {
     groupCode: "代码",
     groupJobs: "任务",
     groupAdvanced: "高级",
+    groupDetailSetup: "模型 + 成本",
+    groupDetailInfo: "当前状态",
+    groupDetailChat: "日常聊天操作",
+    groupDetailExtend: "MCP, 记忆, 技能",
+    groupDetailSession: "已保存的会话",
+    groupDetailCode: "编辑 + 计划 (代码模式)",
+    groupDetailJobs: "后台进程 (代码模式)",
+    groupDetailAdvanced: "高级或一次性设置",
   },
   atMentions: {
     loading: "加载中…",
@@ -1133,20 +1178,42 @@ export const zhCN: TranslationSchema = {
     probeFailed: "探测失败 — {message}",
   },
   webErrors: {
-    status: "web_search 状态码 {status}",
-    mojeekBlocked: "web_search: Mojeek 反爬页面 — 频率限制或被屏蔽",
+    status:
+      "web_search {status} — try: 搜索后端返回错误；请改写查询，或使用 /search-engine mojeek|searxng 切换引擎",
+    rateLimit429:
+      "web_search 429 — try: 等待 10 秒后重试，或改写查询；搜索后端正在对该客户端进行限流",
+    forbidden403:
+      "web_search 403 — try: 搜索后端拒绝该客户端访问；使用 /search-engine mojeek|searxng 切换引擎，或稍后重试",
+    serverError5xx:
+      "web_search {status} — try: 在浏览器中打开搜索 URL；若能加载则属临时故障，等 30 秒重试即可",
+    mojeekBlocked:
+      "web_search: Mojeek 反爬页面 — 频率限制或被屏蔽 — try: 等待 30 秒后重试，或使用 /search-engine searxng 切换引擎",
     mojeekNoResults:
-      "web_search: 返回 0 条结果但响应看起来不是正常空结果页（{chars} 字符，前 120 字符：{preview}）",
-    invalidEndpoint: 'web_search: 无效的 SearXNG 端点 "{endpoint}"',
-    endpointMustBeHttp: "web_search: SearXNG 端点必须是 http(s) 协议，当前为 {protocol}",
+      "web_search: 返回 0 条结果但响应看起来不是正常空结果页（{chars} 字符，前 120 字符：{preview}）— try: 使用更简单的关键词改写查询，或使用 /search-engine searxng 切换引擎",
+    invalidEndpoint:
+      'web_search: 无效的 SearXNG 端点 "{endpoint}" — try: 使用 /search-endpoint http://host:port 设置有效的 URL',
+    endpointMustBeHttp:
+      "web_search: SearXNG 端点必须是 http(s) 协议，当前为 {protocol} — try: 使用 /search-endpoint http://host:port 设置有效的 URL",
     cannotReach:
-      "web_search: 无法访问 SearXNG 服务器 {endpoint}。请安装 SearXNG（https://github.com/searxng/searxng）并启动（例如 `docker run -d -p 8080:8080 searxng/searxng`），或使用 /search-engine mojeek 切换到默认引擎。",
+      "web_search: 无法访问 SearXNG 服务器 {endpoint} — try: 安装并启动 SearXNG（https://github.com/searxng/searxng，例如 `docker run -d -p 8080:8080 searxng/searxng`），或使用 /search-engine mojeek 切换到默认引擎",
     searxngNoResults:
-      "web_search: 返回 0 条结果但 SearXNG 响应看起来不是正常空结果页（{chars} 字符）",
-    fetchStatus: "web_fetch 状态码 {status}（{url}）",
-    fetchTooLarge: "web_fetch 拒绝：content-length {len} 字节超过上限 {cap} 字节（{url}）",
-    fetchBodyTooLarge: "web_fetch 拒绝：响应体超过 {cap} 字节上限（已接收 {seen} 字节）",
-    fetchInvalidUrl: "web_fetch: URL 必须以 http:// 或 https:// 开头",
+      "web_search: 返回 0 条结果但 SearXNG 响应看起来不是正常空结果页（{chars} 字符）— try: 使用更简单的关键词改写查询，或使用 /search-engine mojeek 切换引擎",
+    fetchStatus:
+      "web_fetch {status} for {url} — try: 在浏览器中确认该 URL 能否访问；该状态码表明目标主机返回了错误页面",
+    fetchRateLimit429:
+      "web_fetch 429 for {url} — try: 等待 10 秒后重试；目标主机正在对该客户端进行限流",
+    fetchForbidden403:
+      "web_fetch 403 for {url} — try: 目标主机拒绝该客户端访问；该页面可能需要登录或屏蔽爬虫 — 改用 web_search 摘要",
+    fetchServerError5xx:
+      "web_fetch {status} for {url} — try: 在浏览器中打开该 URL；若能加载则属临时故障，等 30 秒重试即可",
+    fetchTimeout:
+      "web_fetch: timed out after {ms}ms for {url} — try: 更短的 URL 或更小的内容；可能是 CDN 较慢，或重试一次",
+    fetchTooLarge:
+      "web_fetch 拒绝：content-length {len} 字节超过上限 {cap} 字节（{url}）— try: 改换其他 URL 获取较小的内容；该页面过大无法获取",
+    fetchBodyTooLarge:
+      "web_fetch 拒绝：响应体超过 {cap} 字节上限（已接收 {seen} 字节）— try: 改换其他 URL 获取较小的内容；该页面流式传输超出大小上限",
+    fetchInvalidUrl:
+      "web_fetch: URL 必须以 http:// 或 https:// 开头 — try: 传入绝对的 http(s) URL（该 URL 格式错误或使用了不支持的协议）",
   },
   choiceConfirm: {
     customLabel: "自定义回答",
@@ -1166,6 +1233,7 @@ export const zhCN: TranslationSchema = {
     error: "错误",
     doctor: "环境诊断",
     you: "你",
+    task: "任务",
   },
   cardLabels: {
     prompt: "提示",
@@ -1240,5 +1308,111 @@ export const zhCN: TranslationSchema = {
     labelReasoning: "推理",
     yankedToast: "▸ 已复制 {size} 字符到剪贴板 (osc52)",
     yankedToastFile: "▸ 已复制 {size} 字符 · 文件：{path}",
+  },
+  mcpHealth: {
+    noData: "无检查数据",
+    healthy: "正常 \u00b7 {ms}ms",
+    slow: "缓慢 \u00b7 {ms}ms",
+    verySlow: "非常慢 \u00b7 {ms}ms",
+  },
+  denyContextInput: {
+    description: "告诉模型你为什么拒绝了。模型下次会看到你的理由作为额外的上下文。",
+  },
+  cardStream: {
+    scrollAbove: " \u2191 {scroll}/{max} 行",
+    scrollAbovePlural: " \u2191 {scroll}/{max} 行",
+    scrollMore: " \u2014 还有 {remaining} 行",
+    scrollPgUp: " \u00b7 PgUp/\u6eda\u8f6e/\u2191",
+  },
+  slashArgPicker: {
+    noMatch: '\u6ca1\u6709\u5339\u914d "{partial}"',
+    keepTyping: " \u2014 \u7ee7\u7eed\u8f93\u5165\uff0c\u6216 Backspace \u4fee\u6539",
+    above: "   \u2191 \u8fd8\u6709 {hidden} \u4e2a",
+    below: "   \u2193 \u8fd8\u6709 {hidden} \u4e2a",
+    footer: "  \u2191\u2193 \u5bfc\u822a \u00b7 Tab/\u23ce \u9009\u62e9 \u00b7 Esc \u53d6\u6d88",
+  },
+  mcpMarketplace: {
+    title: "MCP 市场",
+    filter: "筛选：",
+    filterPlaceholder: "（输入筛选）",
+    matchSingular: "{n} 条匹配",
+    matchPlural: "{n} 条匹配",
+    loading: "加载中…",
+    noEntries: "无条目",
+    opening: "正在打开注册表…",
+    cached: " · 已缓存",
+    exhausted: " · 已耗尽",
+    loadingMore: "加载更多…",
+    allLoaded: "所有页面已加载",
+    fetchingDetail: "正在获取 smithery 详情…",
+    noInstallInfo: "没有 {name} 的安装信息 — 试试 `npx -y @smithery/cli install {name}`",
+    alreadyInstalled: "已安装：{spec}",
+    installed: "已安装 → {spec}",
+    uninstalled: "已卸载 {name}",
+    installFailed: "安装失败：{message}",
+    notInstalled: "未安装：{name}",
+    bridged: "✓ 已安装 {name} — 已桥接",
+    bridgeFailed: "▲ 已安装 {name} — 桥接失败：{reason}",
+    bridgeReloadFailed: "✓ 已安装 {name} — 重启 `reasonix code` 以桥接（重载失败：{message}）",
+    restartBridge: "✓ 已安装 {name} — 重启 `reasonix code` 以桥接",
+    needsEnv: "  ·  需要环境变量：{env}",
+    badgeOfficial: "[官方]",
+    badgeSmithery: "[三方]",
+    badgeLocal: "[本地]",
+    footerHint: "输入筛选 · ↑↓ 选择 · ⏎ 安装/切换 · PgDn 加载更多 · Esc 关闭",
+    specLine: "配置：{runtime} {id} \u00b7 {transport}",
+    smitheryDetail: "（smithery 列表 \u2014 按 Enter 获取安装详情）",
+    statusError: "错误：{message}",
+  },
+  mcpBrowser: {
+    title: "◈ MCP 浏览器",
+    empty: "没有挂载 MCP 服务器。运行 `reasonix setup` 选择一些，或使用 --mcp 启动。",
+    serverCount: "{count} 个服务器",
+    footer: "↑↓ 选择 · [r] 重连 · [d] 禁用 · Esc 退出",
+  },
+  checkpointPicker: {
+    title: "恢复检查点 \u2014 {workspace}",
+    header: " \u25c8 REASONIX \u00b7 选择检查点 ",
+    empty: "  此工作区暂无检查点 — 参见 /checkpoint 创建",
+    more: "     … 还有 {hidden} 个",
+    footer: "  ↑↓ 选择  ·  ⏎ 恢复  ·  [d] 删除  ·  Esc 退出",
+    footerEmpty: "  Esc 退出",
+  },
+  planReviseConfirm: {
+    title: "计划修改已提交",
+    metaRight: "−{removed}  +{added}  ·  {kept} 个保留",
+    updatedSummary: "更新摘要：{summary}",
+    acceptLabel: "接受修改 — 应用新的步骤列表",
+    acceptHint: "用新步骤替换剩余计划。已完成的步骤不变。",
+    rejectLabel: "拒绝 — 保留原计划",
+    rejectHint: "放弃修改。模型继续按原步骤执行。",
+  },
+  diffApp: {
+    title: "reasonix diff",
+    turnLabel: "第 {turn} 轮（{current}/{total}）",
+    turnsAligned: "{count} 轮已对齐",
+    paneEmpty: "（此轮该侧无记录）",
+    kindMatch: "✓ 一致",
+    kindDiverge: "★ 分歧",
+    kindOnlyInA: "← 仅 A 有",
+    kindOnlyInB: "→ 仅 B 有",
+  },
+  recordView: {
+    userPrefix: "你 › ",
+    assistant: "助手",
+    toolPrefix: "tool<",
+    argsLabel: "  参数：",
+    resultArrow: "  → ",
+    error: "错误 ",
+    cache: "  · 缓存 ",
+    toolCallOnly: "（仅工具调用响应）",
+    truncateExtra: "（+{extra} 字符）",
+  },
+  replayApp: {
+    emptyTranscript: "空记录",
+    turnProgress: "第 {current}/{total} 轮",
+    noRecords: "无记录",
+    untracked: "（未追踪）",
+    churned: "（已变更 ×{count}）",
   },
 };

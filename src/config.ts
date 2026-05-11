@@ -88,6 +88,8 @@ export interface ReasonixConfig {
   mcp?: string[];
   /** Names of servers in `mcp` to skip on bridge — see `/mcp disable <name>`. */
   mcpDisabled?: string[];
+  /** Env overlay per MCP server name (matches the `name=` prefix of the spec). Stdio transports merge this over process.env; SSE/HTTP ignore it. */
+  mcpEnv?: Record<string, Record<string, string>>;
   session?: string | null;
   setupCompleted?: boolean;
   search?: boolean;
@@ -95,6 +97,10 @@ export interface ReasonixConfig {
   webSearchEngine?: "mojeek" | "searxng";
   /** Base URL for SearXNG instance (default http://localhost:8080). */
   webSearchEndpoint?: string;
+  dashboard?: {
+    /** Pin the embedded dashboard to a fixed port — required for stable SSH tunnels. 0/absent → ephemeral. */
+    port?: number;
+  };
   projects?: {
     [absoluteRootDir: string]: {
       shellAllowed?: string[];
@@ -136,6 +142,21 @@ export function writeConfig(cfg: ReasonixConfig, path: string = defaultConfigPat
 /** Resolve the language from config file. */
 export function loadLanguage(path: string = defaultConfigPath()): LanguageCode | undefined {
   return readConfig(path).lang;
+}
+
+export function mcpEnvFor(
+  serverName: string | null | undefined,
+  cfg: ReasonixConfig,
+): Record<string, string> | undefined {
+  if (!serverName) return undefined;
+  const entry = cfg.mcpEnv?.[serverName];
+  if (!entry) return undefined;
+  // Coerce to string and drop empty values — JSON config could be sloppy.
+  const filtered: Record<string, string> = {};
+  for (const [k, v] of Object.entries(entry)) {
+    if (typeof v === "string" && v.length > 0) filtered[k] = v;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
 /** Persist the language so it survives a relaunch. */
@@ -274,7 +295,8 @@ export function clearProjectShellAllowed(
 /** Unknown values fall back to "review" so hand-edited bad config gets the safe default. */
 export function loadEditMode(path: string = defaultConfigPath()): EditMode {
   const v = readConfig(path).editMode;
-  return v === "auto" ? "auto" : "review";
+  if (v === "auto" || v === "yolo") return v;
+  return "review";
 }
 
 /** Persist the edit mode so `/mode auto` survives a relaunch. */
@@ -328,6 +350,13 @@ export function saveReasoningEffort(
 ): void {
   const cfg = readConfig(path);
   cfg.reasoningEffort = effort;
+  writeConfig(cfg, path);
+}
+
+/** Persist preset so `/preset pro` (or `/model deepseek-v4-pro`) sticks across relaunches. */
+export function savePreset(preset: PresetName, path: string = defaultConfigPath()): void {
+  const cfg = readConfig(path);
+  cfg.preset = preset;
   writeConfig(cfg, path);
 }
 

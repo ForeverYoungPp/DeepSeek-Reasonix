@@ -1,6 +1,6 @@
 import { type WriteStream, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useStdin, useStdout } from "ink";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type JsonlEventSink,
@@ -42,6 +42,7 @@ import {
   mouseClipboardHintShown,
   resolveThemePreference,
   saveEditMode,
+  savePreset,
   saveReasoningEffort,
   saveTheme,
 } from "../../config.js";
@@ -84,6 +85,7 @@ import { registerSkillTools } from "../../tools/skills.js";
 import { formatSubagentResult, spawnSubagent } from "../../tools/subagent.js";
 import { webFetch } from "../../tools/web.js";
 import { openTranscriptFile } from "../../transcript/log.js";
+import { openInExternalEditor } from "../edit/external-editor.js";
 import { dumpStartupProfile, markPhase } from "../startup-profile.js";
 import { AtMentionSuggestions } from "./AtMentionSuggestions.js";
 import { BootSplash } from "./BootSplash.js";
@@ -248,6 +250,8 @@ export interface AppProps {
    * who don't want a localhost listener.
    */
   noDashboard?: boolean;
+  /** Pin the dashboard to a fixed port. `undefined` keeps ephemeral assignment. */
+  dashboardPort?: number;
   /** Mid-chat session swap — Root remounts App with the new session via key. */
   onSwitchSession?: (name: string | undefined) => void;
   /**
@@ -365,6 +369,7 @@ function AppInner({
   progressSink,
   codeMode,
   noDashboard,
+  dashboardPort,
   onSwitchSession,
   mouse = true,
   themeName,
@@ -506,6 +511,9 @@ function AppInner({
     id: number;
     command: string;
     kind: "run_command" | "run_background";
+    cwd?: string;
+    timeoutSec?: number;
+    waitSec?: number;
   } | null>(null);
   // Plan text the model submitted via `submit_plan` while plan mode
   // was active. Non-null renders PlanConfirm; user picks Approve /
@@ -621,6 +629,23 @@ function AppInner({
   // persist to disk — the session log already keeps the messages, and
   // cross-session bash-style recall would need per-project scoping.
   const { recallPrev, recallNext, pushHistory, resetCursor } = useInputRecall(setInput);
+  const { setRawMode, isRawModeSupported } = useStdin();
+  // Ctrl+X — hand the composer buffer to $EDITOR. Raw-mode flip lets the
+  // editor own line-buffered input; result replaces the composer value.
+  const handleOpenExternalEditor = useCallback(async () => {
+    if (!isRawModeSupported) {
+      log.pushWarning(t("composer.editorFailed"), t("composer.editorNoRawMode"));
+      return;
+    }
+    setRawMode(false);
+    try {
+      const result = await openInExternalEditor(input);
+      if (result.kind === "ok") setInput(result.content);
+      else if (result.detail) log.pushWarning(t("composer.editorFailed"), result.detail);
+    } finally {
+      setRawMode(true);
+    }
+  }, [input, isRawModeSupported, log, setRawMode]);
   // Disambiguates <Static> keys when a single turn yields multiple assistant_final events.
   const assistantIterCounter = useRef<number>(0);
   // Per-session @url fetch cache. Keyed by stripped URL; same URL
@@ -856,6 +881,23 @@ function AppInner({
   useEffect(() => {
     loop.hooks = hookList;
   }, [loop, hookList]);
+
+  // Seed status.preset from initial loop state so the StatusRow preset pill
+  // renders correctly on first paint — usePresetMode's React-state mirror
+  // doesn't propagate to the agent store, so without this dispatch the pill
+  // would show the bare model id instead of the resolved preset.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only seed
+  useEffect(() => {
+    const canonical: "auto" | "flash" | "pro" | null =
+      loop.model === "deepseek-v4-pro"
+        ? "pro"
+        : loop.model === "deepseek-v4-flash"
+          ? loop.autoEscalate
+            ? "auto"
+            : "flash"
+          : null;
+    agentStore.dispatch({ type: "session.preset.change", preset: canonical });
+  }, []);
 
   // Deferred MCP bridge — fire addSpec for each requested server in the
   // background instead of blocking startup, route lifecycle events to
@@ -1115,6 +1157,56 @@ function AppInner({
     mcpServers: liveMcpServers,
     slashUsage,
   });
+
+  // Ctrl+P / Ctrl+N from PromptInput route here. When any input-prefix
+  // picker is open (slash / @ / slash-arg), the keys navigate that picker
+  // — consistent with ↑/↓. Otherwise they walk prompt history (issue #647).
+  const handleHistoryPrev = useCallback(() => {
+    if (atState && atState.entries.length > 0) {
+      setAtSelected((i) => Math.max(0, i - 1));
+      return;
+    }
+    if (slashArgMatches && slashArgMatches.length > 0) {
+      setSlashArgSelected((i) => Math.max(0, i - 1));
+      return;
+    }
+    if (slashMatches && slashMatches.length > 0) {
+      setSlashSelected((i) => Math.max(0, i - 1));
+      return;
+    }
+    recallPrev();
+  }, [
+    atState,
+    slashArgMatches,
+    slashMatches,
+    setAtSelected,
+    setSlashArgSelected,
+    setSlashSelected,
+    recallPrev,
+  ]);
+  const handleHistoryNext = useCallback(() => {
+    if (atState && atState.entries.length > 0) {
+      setAtSelected((i) => Math.min(atState.entries.length - 1, i + 1));
+      return;
+    }
+    if (slashArgMatches && slashArgMatches.length > 0) {
+      setSlashArgSelected((i) => Math.min(slashArgMatches.length - 1, i + 1));
+      return;
+    }
+    if (slashMatches && slashMatches.length > 0) {
+      setSlashSelected((i) => Math.min(slashMatches.length - 1, i + 1));
+      return;
+    }
+    recallNext();
+  }, [
+    atState,
+    slashArgMatches,
+    slashMatches,
+    setAtSelected,
+    setSlashArgSelected,
+    setSlashSelected,
+    recallNext,
+  ]);
 
   // Surface a one-time banner about session state on first mount.
   const sessionBannerShown = useRef(false);
@@ -1647,240 +1739,253 @@ function AppInner({
     if (dashboardStartingRef.current) return dashboardStartingRef.current;
     const startup = (async () => {
       const { startDashboardServer } = await import("../../server/index.js");
-      const handle = await startDashboardServer({
-        mode: "attached",
-        configPath: defaultConfigPath(),
-        usageLogPath: defaultUsageLogPath(),
-        loop,
-        tools,
-        mcpServers: liveMcpServers,
-        getCurrentCwd: () => (codeMode ? currentRootDirRef.current : undefined),
-        getEditMode: () => (codeMode ? editModeRef.current : undefined),
-        getPlanMode: () => planModeRef.current,
-        getPendingEditCount: () => pendingEdits.current.length,
-        getLatestVersion: () => latestVersionRef.current,
-        getSessionName: () => session ?? null,
-        setEditMode: (m: EditMode) => {
-          setEditMode(m);
-          editModeRef.current = m;
-          saveEditMode(m);
-          return m;
-        },
-        setPlanMode: (on: boolean) => {
-          if (codeMode) togglePlanMode(on);
-        },
-        applyPresetLive: (name: string) => {
-          const settings = resolvePreset(name as PresetName);
-          loop.configure({
-            model: settings.model,
-            autoEscalate: settings.autoEscalate,
-            reasoningEffort: settings.reasoningEffort,
-          });
-          agentStore.dispatch({ type: "session.model.change", model: settings.model });
-          const canonical: "auto" | "flash" | "pro" =
-            settings.model === "deepseek-v4-pro" ? "pro" : settings.autoEscalate ? "auto" : "flash";
-          setPreset(canonical);
-        },
-        applyEffortLive: (effort) => {
-          loop.configure({ reasoningEffort: effort });
-        },
-        applyModelLive: (model) => {
-          loop.configure({ model });
-          agentStore.dispatch({ type: "session.model.change", model });
-        },
-        getModels: () => modelsRef.current,
-        setProNextLive: (armed) => {
-          if (armed) loop.armProForNextTurn();
-          else loop.disarmPro();
-        },
-        setBudgetUsdLive: (usd) => {
-          loop.setBudget(usd);
-        },
-        getLoopRunStatus: () => getLoopStatus(),
-        startAutoLoop: (intervalMs, prompt) => startLoop(intervalMs, prompt),
-        stopAutoLoop: () => stopLoop(),
-        // ---------- Chat bridge ----------
-        getMessages: (): DashboardMessage[] =>
-          cardsToDashboardMessages(agentStore.getState().cards),
-        subscribeEvents: (handler) => {
-          eventSubscribersRef.current.add(handler);
-          return () => {
-            eventSubscribersRef.current.delete(handler);
-          };
-        },
-        submitPrompt: (text: string): SubmitResult => {
-          if (busyRef.current) {
-            return { accepted: false, reason: "loop is busy with a turn" };
-          }
-          const fn = handleSubmitRef.current;
-          if (!fn) return { accepted: false, reason: "TUI not ready" };
-          // Fire-and-forget — handleSubmit drives the loop event stream
-          // which the web sees via SSE. We don't await it here because
-          // a turn can take minutes; the HTTP request would time out.
-          fn(text).catch(() => undefined);
-          return { accepted: true };
-        },
-        abortTurn: () => {
-          if (busyRef.current) loop.abort();
-        },
-        isBusy: () => busyRef.current,
-        getStats: () => {
-          // Pull from the loop's live aggregator (same source the TUI's
-          // StatsPanel reads). `balance` comes from useSessionInfo via a
-          // ref-mirror so this callback stays cheap.
-          const s = loop.stats.summary();
-          const ctxCap = DEEPSEEK_CONTEXT_TOKENS[loop.model] ?? DEFAULT_CONTEXT_TOKENS;
-          return {
-            turns: s.turns,
-            totalCostUsd: s.totalCostUsd,
-            lastTurnCostUsd: s.lastTurnCostUsd,
-            totalInputCostUsd: s.totalInputCostUsd,
-            totalOutputCostUsd: s.totalOutputCostUsd,
-            cacheHitRatio: s.cacheHitRatio,
-            lastPromptTokens: s.lastPromptTokens,
-            contextCapTokens: ctxCap,
-            // useSessionInfo's Balance is a flat { currency, total }; the
-            // dashboard wire shape is the richer DeepSeek BalanceInfo
-            // array (granted / topped_up split). Convert as a single-
-            // entry array so the SPA always reads `balance[0]` shape.
-            balance: balanceRef.current
-              ? [
-                  {
-                    currency: balanceRef.current.currency,
-                    total_balance: String(balanceRef.current.total),
-                  },
-                ]
-              : null,
-          };
-        },
-        // ---------- Modal mirroring ----------
-        getActiveModal: (): ActiveModal | null => {
-          // Probe the live state via refs in priority order — only one
-          // modal can be up at a time per App invariant.
-          const ps = pendingShell;
-          if (ps) {
-            return {
-              kind: "shell",
-              command: ps.command,
-              allowPrefix: derivePrefix(ps.command),
-              shellKind: ps.kind,
-            };
-          }
-          const pc = pendingChoice;
-          if (pc) {
-            return {
-              kind: "choice",
-              question: pc.question,
-              options: pc.options,
-              allowCustom: pc.allowCustom,
-            };
-          }
-          if (pendingPlanRef.current) {
-            return { kind: "plan", body: pendingPlanRef.current };
-          }
-          const er = pendingEditReview;
-          if (er) {
-            return {
-              kind: "edit-review",
-              path: er.path,
-              search: er.search ?? "",
-              replace: er.replace ?? "",
-              preview: (er.search || er.replace || "").split("\n").slice(0, 12).join("\n"),
-              total: pendingEdits.current.length,
-              remaining: pendingEdits.current.length,
-            };
-          }
-          if (pendingRevision) {
-            return {
-              kind: "revision",
-              reason: pendingRevision.reason,
-              remainingSteps: pendingRevision.remainingSteps.map((s) => ({
-                id: s.id,
-                title: s.title,
-                action: s.action,
-                ...(s.risk ? { risk: s.risk } : {}),
-              })),
-              ...(pendingRevision.summary ? { summary: pendingRevision.summary } : {}),
-            };
-          }
-          const picker = activePickerSnapshotRef.current;
-          if (picker) {
-            return { kind: "picker", ...picker };
-          }
-          const viewer = activeViewerSnapshotRef.current;
-          if (viewer) {
-            return { kind: "viewer", ...viewer };
-          }
-          return null;
-        },
-        resolveShellConfirm: (choice) => {
-          const fn = handleShellConfirmRef.current;
-          if (fn) Promise.resolve(fn(choice)).catch(() => undefined);
-        },
-        resolveChoiceConfirm: (choice) => {
-          const fn = handleChoiceConfirmRef.current;
-          if (fn) fn(choice).catch(() => undefined);
-        },
-        resolvePlanConfirm: (choice, text) => {
-          if (choice === "cancel") {
-            handlePlanConfirmRef.current("cancel").catch(() => undefined);
-            return;
-          }
-          const plan = pendingPlanRef.current ?? "";
-          // Bypass the picker → input two-step on web. The override
-          // form of handleStagedInputSubmit takes the plan + mode
-          // directly; behaviour matches the TUI's "user typed feedback +
-          // pressed Enter" path.
-          handleStagedInputSubmitRef
-            .current(text ?? "", { plan, mode: choice })
-            .catch(() => undefined);
-        },
-        resolveEditReview: (choice) => {
-          const resolve = editReviewResolveRef.current;
-          if (resolve) {
-            editReviewResolveRef.current = null;
-            setPendingEditReview(null);
-            resolve({ choice, denyContext: undefined });
-          }
-        },
-        resolveCheckpointConfirm: (choice, text) => {
-          // Web's "revise" path sends feedback in one shot; we hand the
-          // current pending checkpoint to the submit handler directly,
-          // skipping the TUI's staged-input two-step. continue/stop fall
-          // through to the regular picker handler.
-          if (choice === "revise" && typeof text === "string") {
-            const snap = pendingCheckpoint;
-            setPendingCheckpoint(null);
-            if (!snap) return;
-            Promise.resolve(handleCheckpointReviseSubmitRef.current(text, snap)).catch(
-              () => undefined,
-            );
-            return;
-          }
-          Promise.resolve(handleCheckpointConfirmRef.current(choice)).catch(() => undefined);
-        },
-        resolveReviseConfirm: (choice) => {
-          Promise.resolve(handleReviseConfirmRef.current(choice)).catch(() => undefined);
-        },
-        resolvePicker: (resolution) => {
-          const fn = activePickerResolverRef.current;
-          if (fn) Promise.resolve(fn(resolution)).catch(() => undefined);
-        },
-        resolveViewer: () => {
-          const fn = activeViewerResolverRef.current;
-          if (fn) Promise.resolve(fn()).catch(() => undefined);
-        },
-        // ---------- v0.14 mutation surface ----------
-        reloadHooks: () => reloadHooks(codeMode ? currentRootDirRef.current : undefined),
-        addToolToPrefix: (spec) => loop.prefix.addTool(spec),
-        reloadMcp: mcpRuntime
-          ? async () => {
-              const r = await mcpRuntime.reloadFromConfig(loop);
-              setLiveMcpServers(r.summaries);
-              return r.summaries.length;
+      const handle = await startDashboardServer(
+        {
+          mode: "attached",
+          configPath: defaultConfigPath(),
+          usageLogPath: defaultUsageLogPath(),
+          loop,
+          tools,
+          mcpServers: liveMcpServers,
+          getCurrentCwd: () => (codeMode ? currentRootDirRef.current : undefined),
+          getEditMode: () => (codeMode ? editModeRef.current : undefined),
+          getPlanMode: () => planModeRef.current,
+          getPendingEditCount: () => pendingEdits.current.length,
+          getLatestVersion: () => latestVersionRef.current,
+          getSessionName: () => session ?? null,
+          setEditMode: (m: EditMode) => {
+            setEditMode(m);
+            editModeRef.current = m;
+            saveEditMode(m);
+            return m;
+          },
+          setPlanMode: (on: boolean) => {
+            if (codeMode) togglePlanMode(on);
+          },
+          applyPresetLive: (name: string) => {
+            const settings = resolvePreset(name as PresetName);
+            loop.configure({
+              model: settings.model,
+              autoEscalate: settings.autoEscalate,
+              reasoningEffort: settings.reasoningEffort,
+            });
+            agentStore.dispatch({ type: "session.model.change", model: settings.model });
+            const canonical: "auto" | "flash" | "pro" =
+              settings.model === "deepseek-v4-pro"
+                ? "pro"
+                : settings.autoEscalate
+                  ? "auto"
+                  : "flash";
+            setPreset(canonical);
+            agentStore.dispatch({ type: "session.preset.change", preset: canonical });
+            try {
+              savePreset(canonical);
+            } catch {
+              /* disk full / perms — runtime change still took effect */
             }
-          : undefined,
-      });
+          },
+          applyEffortLive: (effort) => {
+            loop.configure({ reasoningEffort: effort });
+          },
+          applyModelLive: (model) => {
+            loop.configure({ model });
+            agentStore.dispatch({ type: "session.model.change", model });
+          },
+          getModels: () => modelsRef.current,
+          setProNextLive: (armed) => {
+            if (armed) loop.armProForNextTurn();
+            else loop.disarmPro();
+          },
+          setBudgetUsdLive: (usd) => {
+            loop.setBudget(usd);
+          },
+          getLoopRunStatus: () => getLoopStatus(),
+          startAutoLoop: (intervalMs, prompt) => startLoop(intervalMs, prompt),
+          stopAutoLoop: () => stopLoop(),
+          // ---------- Chat bridge ----------
+          getMessages: (): DashboardMessage[] =>
+            cardsToDashboardMessages(agentStore.getState().cards),
+          subscribeEvents: (handler) => {
+            eventSubscribersRef.current.add(handler);
+            return () => {
+              eventSubscribersRef.current.delete(handler);
+            };
+          },
+          submitPrompt: (text: string): SubmitResult => {
+            if (busyRef.current) {
+              return { accepted: false, reason: "loop is busy with a turn" };
+            }
+            const fn = handleSubmitRef.current;
+            if (!fn) return { accepted: false, reason: "TUI not ready" };
+            // Fire-and-forget — handleSubmit drives the loop event stream
+            // which the web sees via SSE. We don't await it here because
+            // a turn can take minutes; the HTTP request would time out.
+            fn(text).catch(() => undefined);
+            return { accepted: true };
+          },
+          abortTurn: () => {
+            if (busyRef.current) loop.abort();
+          },
+          isBusy: () => busyRef.current,
+          getStats: () => {
+            // Pull from the loop's live aggregator (same source the TUI's
+            // StatsPanel reads). `balance` comes from useSessionInfo via a
+            // ref-mirror so this callback stays cheap.
+            const s = loop.stats.summary();
+            const ctxCap = DEEPSEEK_CONTEXT_TOKENS[loop.model] ?? DEFAULT_CONTEXT_TOKENS;
+            return {
+              turns: s.turns,
+              totalCostUsd: s.totalCostUsd,
+              lastTurnCostUsd: s.lastTurnCostUsd,
+              totalInputCostUsd: s.totalInputCostUsd,
+              totalOutputCostUsd: s.totalOutputCostUsd,
+              cacheHitRatio: s.cacheHitRatio,
+              lastPromptTokens: s.lastPromptTokens,
+              contextCapTokens: ctxCap,
+              // useSessionInfo's Balance is a flat { currency, total }; the
+              // dashboard wire shape is the richer DeepSeek BalanceInfo
+              // array (granted / topped_up split). Convert as a single-
+              // entry array so the SPA always reads `balance[0]` shape.
+              balance: balanceRef.current
+                ? [
+                    {
+                      currency: balanceRef.current.currency,
+                      total_balance: String(balanceRef.current.total),
+                    },
+                  ]
+                : null,
+            };
+          },
+          // ---------- Modal mirroring ----------
+          getActiveModal: (): ActiveModal | null => {
+            // Probe the live state via refs in priority order — only one
+            // modal can be up at a time per App invariant.
+            const ps = pendingShell;
+            if (ps) {
+              return {
+                kind: "shell",
+                command: ps.command,
+                allowPrefix: derivePrefix(ps.command),
+                shellKind: ps.kind,
+              };
+            }
+            const pc = pendingChoice;
+            if (pc) {
+              return {
+                kind: "choice",
+                question: pc.question,
+                options: pc.options,
+                allowCustom: pc.allowCustom,
+              };
+            }
+            if (pendingPlanRef.current) {
+              return { kind: "plan", body: pendingPlanRef.current };
+            }
+            const er = pendingEditReview;
+            if (er) {
+              return {
+                kind: "edit-review",
+                path: er.path,
+                search: er.search ?? "",
+                replace: er.replace ?? "",
+                preview: (er.search || er.replace || "").split("\n").slice(0, 12).join("\n"),
+                total: pendingEdits.current.length,
+                remaining: pendingEdits.current.length,
+              };
+            }
+            if (pendingRevision) {
+              return {
+                kind: "revision",
+                reason: pendingRevision.reason,
+                remainingSteps: pendingRevision.remainingSteps.map((s) => ({
+                  id: s.id,
+                  title: s.title,
+                  action: s.action,
+                  ...(s.risk ? { risk: s.risk } : {}),
+                })),
+                ...(pendingRevision.summary ? { summary: pendingRevision.summary } : {}),
+              };
+            }
+            const picker = activePickerSnapshotRef.current;
+            if (picker) {
+              return { kind: "picker", ...picker };
+            }
+            const viewer = activeViewerSnapshotRef.current;
+            if (viewer) {
+              return { kind: "viewer", ...viewer };
+            }
+            return null;
+          },
+          resolveShellConfirm: (choice) => {
+            const fn = handleShellConfirmRef.current;
+            if (fn) Promise.resolve(fn(choice)).catch(() => undefined);
+          },
+          resolveChoiceConfirm: (choice) => {
+            const fn = handleChoiceConfirmRef.current;
+            if (fn) fn(choice).catch(() => undefined);
+          },
+          resolvePlanConfirm: (choice, text) => {
+            if (choice === "cancel") {
+              handlePlanConfirmRef.current("cancel").catch(() => undefined);
+              return;
+            }
+            const plan = pendingPlanRef.current ?? "";
+            // Bypass the picker → input two-step on web. The override
+            // form of handleStagedInputSubmit takes the plan + mode
+            // directly; behaviour matches the TUI's "user typed feedback +
+            // pressed Enter" path.
+            handleStagedInputSubmitRef
+              .current(text ?? "", { plan, mode: choice })
+              .catch(() => undefined);
+          },
+          resolveEditReview: (choice) => {
+            const resolve = editReviewResolveRef.current;
+            if (resolve) {
+              editReviewResolveRef.current = null;
+              setPendingEditReview(null);
+              resolve({ choice, denyContext: undefined });
+            }
+          },
+          resolveCheckpointConfirm: (choice, text) => {
+            // Web's "revise" path sends feedback in one shot; we hand the
+            // current pending checkpoint to the submit handler directly,
+            // skipping the TUI's staged-input two-step. continue/stop fall
+            // through to the regular picker handler.
+            if (choice === "revise" && typeof text === "string") {
+              const snap = pendingCheckpoint;
+              setPendingCheckpoint(null);
+              if (!snap) return;
+              Promise.resolve(handleCheckpointReviseSubmitRef.current(text, snap)).catch(
+                () => undefined,
+              );
+              return;
+            }
+            Promise.resolve(handleCheckpointConfirmRef.current(choice)).catch(() => undefined);
+          },
+          resolveReviseConfirm: (choice) => {
+            Promise.resolve(handleReviseConfirmRef.current(choice)).catch(() => undefined);
+          },
+          resolvePicker: (resolution) => {
+            const fn = activePickerResolverRef.current;
+            if (fn) Promise.resolve(fn(resolution)).catch(() => undefined);
+          },
+          resolveViewer: () => {
+            const fn = activeViewerResolverRef.current;
+            if (fn) Promise.resolve(fn()).catch(() => undefined);
+          },
+          // ---------- v0.14 mutation surface ----------
+          reloadHooks: () => reloadHooks(codeMode ? currentRootDirRef.current : undefined),
+          addToolToPrefix: (spec) => loop.prefix.addTool(spec),
+          reloadMcp: mcpRuntime
+            ? async () => {
+                const r = await mcpRuntime.reloadFromConfig(loop);
+                setLiveMcpServers(r.summaries);
+                return r.summaries.length;
+              }
+            : undefined,
+        },
+        { port: dashboardPort },
+      );
       dashboardRef.current = handle;
       setDashboardUrlState(handle.url);
       return handle.url;
@@ -1914,6 +2019,7 @@ function AppInner({
     currentRootDirRef,
     reloadHooks,
     setPreset,
+    dashboardPort,
   ]);
 
   const stopDashboard = useCallback(async (): Promise<void> => {
@@ -2220,6 +2326,29 @@ function AppInner({
               oneTime: false,
             }),
           dispatch: agentStore.dispatch,
+          markPlanStepDone: (stepId: string) => {
+            const steps = planStepsRef.current;
+            if (!steps || steps.length === 0) return "no-plan";
+            if (!steps.some((s) => s.id === stepId)) return "not-in-plan";
+            if (completedStepIdsRef.current.has(stepId)) return "already-done";
+            completedStepIdsRef.current.add(stepId);
+            persistPlanState();
+            log.completePlanStep(stepId);
+            return "ok";
+          },
+          markAllPlanStepsDone: () => {
+            const steps = planStepsRef.current;
+            if (!steps || steps.length === 0) return 0;
+            let added = 0;
+            for (const s of steps) {
+              if (completedStepIdsRef.current.has(s.id)) continue;
+              completedStepIdsRef.current.add(s.id);
+              log.completePlanStep(s.id);
+              added++;
+            }
+            if (added > 0) persistPlanState();
+            return added;
+          },
           reloadHooks: () => reloadHooks(codeMode ? currentRootDir : undefined),
           switchCwd: codeMode?.reregisterTools
             ? (newPath: string) => {
@@ -3023,21 +3152,34 @@ function AppInner({
   }, [handleShellConfirm]);
   // Listen for pause requests from tool functions (via PauseGate).
   // Dispatches to the correct modal based on request.kind.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: setters + editModeRef are stable; the listener installs once per mount and reads only refs/setters from closure
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setters, editModeRef, and chatScroll (store handle) are stable; the listener installs once per mount and reads only refs/setters from closure
   useEffect(() => {
     return pauseGate.on((request) => {
       const payload = request.payload as Record<string, unknown>;
       pendingGateIdRef.current = request.id;
+      // Modal pickers reserve viewport rows from the bottom; if the chat is
+      // scrolled up, the picker mounts off-screen and the user can't see it.
+      chatScroll.jumpToBottom();
 
       switch (request.kind) {
         case "run_command":
-        case "run_background":
+        case "run_background": {
+          const p = payload as {
+            command: string;
+            cwd?: string;
+            timeoutSec?: number;
+            waitSec?: number;
+          };
           setPendingShell({
             id: request.id,
-            command: (payload as { command: string }).command,
+            command: p.command,
             kind: request.kind,
+            cwd: p.cwd,
+            timeoutSec: p.timeoutSec,
+            waitSec: p.waitSec,
           });
           break;
+        }
         case "plan_proposed": {
           const p = payload as { plan: string; steps?: PlanStep[]; summary?: string };
           setPendingPlan(p.plan);
@@ -3616,8 +3758,28 @@ function AppInner({
                     onChoose={(outcome) => {
                       setPendingModelPicker(false);
                       if (outcome.kind === "select") {
-                        loop.configure({ model: outcome.id });
+                        // Manual model pick = explicit pin: turn off auto-escalate
+                        // so flash doesn't get bumped, persist inferred preset.
+                        loop.configure({ model: outcome.id, autoEscalate: false });
                         agentStore.dispatch({ type: "session.model.change", model: outcome.id });
+                        const inferred =
+                          outcome.id === "deepseek-v4-pro"
+                            ? "pro"
+                            : outcome.id === "deepseek-v4-flash"
+                              ? "flash"
+                              : null;
+                        setPreset(inferred ?? "flash");
+                        agentStore.dispatch({
+                          type: "session.preset.change",
+                          preset: inferred,
+                        });
+                        if (inferred) {
+                          try {
+                            savePreset(inferred);
+                          } catch {
+                            /* disk full / perms — runtime change still took effect */
+                          }
+                        }
                         log.pushInfo(`▸ model: ${outcome.id}`);
                         return;
                       }
@@ -3629,8 +3791,14 @@ function AppInner({
                           reasoningEffort: p.reasoningEffort,
                         });
                         agentStore.dispatch({ type: "session.model.change", model: p.model });
+                        setPreset(outcome.name);
+                        agentStore.dispatch({
+                          type: "session.preset.change",
+                          preset: outcome.name,
+                        });
                         try {
                           saveReasoningEffort(p.reasoningEffort);
+                          savePreset(outcome.name);
                         } catch {
                           /* disk full / perms — runtime change still took effect */
                         }
@@ -3692,6 +3860,9 @@ function AppInner({
                     command={pendingShell.command}
                     allowPrefix={derivePrefix(pendingShell.command)}
                     kind={pendingShell.kind}
+                    cwd={pendingShell.cwd}
+                    timeoutSec={pendingShell.timeoutSec}
+                    waitSec={pendingShell.waitSec}
                     onChoose={handleShellConfirm}
                   />
                 ) : pendingEditReview ? (
@@ -3737,8 +3908,9 @@ function AppInner({
                             onChange={setInput}
                             onSubmit={handleSubmit}
                             disabled={busy}
-                            onHistoryPrev={recallPrev}
-                            onHistoryNext={recallNext}
+                            onHistoryPrev={handleHistoryPrev}
+                            onHistoryNext={handleHistoryNext}
+                            onOpenExternalEditor={handleOpenExternalEditor}
                           />
                         </Box>
                         <Box flexDirection="column" flexShrink={0} flexWrap="nowrap">

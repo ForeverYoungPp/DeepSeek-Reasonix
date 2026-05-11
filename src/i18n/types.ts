@@ -45,6 +45,8 @@ export interface TranslationSchema {
     applied: string;
     rejected: string;
     noDashboard: string;
+    dashboardPortHint: string;
+    dashboardPortInvalid: string;
     dashboardAutoStartFailed: string;
     systemAppendHint: string;
     systemAppendFileHint: string;
@@ -283,6 +285,16 @@ export interface TranslationSchema {
     savedFooter: string;
     selectFooter: string;
     stepCounter: string;
+    exitHint: string;
+    apiKeyPlaceholder: string;
+    themeSampleReasoning: string;
+  };
+  themePicker: {
+    header: string;
+    footer: string;
+    currentPref: string;
+    activeNow: string;
+    autoDesc: string;
   };
   planFlow: {
     approveCardTitle: string;
@@ -325,6 +337,9 @@ export interface TranslationSchema {
       counterDone: string;
       counterDoneSingular: string;
     };
+    reviseTitle: string;
+    reviseSteps: string;
+    reviseFooter: string;
   };
   statusBar: {
     turn: string;
@@ -339,6 +354,8 @@ export interface TranslationSchema {
     recordingGlyph: string;
     mb: string;
     evt: string;
+    /** Prefix for the edit-gate mode pill — disambiguates from the preset (`/preset auto` is a different "auto"). */
+    editsLabel: string;
   };
   editMode: {
     plan: string;
@@ -364,6 +381,8 @@ export interface TranslationSchema {
     hintAbort: string;
     hintQuit: string;
     abortedHint: string;
+    editorNoRawMode: string;
+    editorFailed: string;
   };
   shellConfirm: {
     title: string;
@@ -381,6 +400,9 @@ export interface TranslationSchema {
     allowAlwaysDesc: string;
     deny: string;
     denyDesc: string;
+    cwdLabel: string;
+    timeoutLabel: string;
+    waitLabel: string;
   };
   editConfirm: {
     footer: string;
@@ -442,6 +464,14 @@ export interface TranslationSchema {
     groupCode: string;
     groupJobs: string;
     groupAdvanced: string;
+    groupDetailSetup: string;
+    groupDetailInfo: string;
+    groupDetailChat: string;
+    groupDetailExtend: string;
+    groupDetailSession: string;
+    groupDetailCode: string;
+    groupDetailJobs: string;
+    groupDetailAdvanced: string;
   };
   atMentions: {
     loading: string;
@@ -492,6 +522,9 @@ export interface TranslationSchema {
   };
   webErrors: {
     status: string;
+    rateLimit429: string;
+    forbidden403: string;
+    serverError5xx: string;
     mojeekBlocked: string;
     mojeekNoResults: string;
     invalidEndpoint: string;
@@ -499,6 +532,10 @@ export interface TranslationSchema {
     cannotReach: string;
     searxngNoResults: string;
     fetchStatus: string;
+    fetchRateLimit429: string;
+    fetchForbidden403: string;
+    fetchServerError5xx: string;
+    fetchTimeout: string;
     fetchTooLarge: string;
     fetchBodyTooLarge: string;
     fetchInvalidUrl: string;
@@ -521,6 +558,7 @@ export interface TranslationSchema {
     error: string;
     doctor: string;
     you: string;
+    task: string;
   };
   cardLabels: {
     prompt: string;
@@ -595,5 +633,111 @@ export interface TranslationSchema {
     labelReasoning: string;
     yankedToast: string;
     yankedToastFile: string;
+  };
+  mcpHealth: {
+    noData: string;
+    healthy: string;
+    slow: string;
+    verySlow: string;
+  };
+  denyContextInput: {
+    description: string;
+  };
+  cardStream: {
+    scrollAbove: string;
+    scrollAbovePlural: string;
+    scrollMore: string;
+    scrollPgUp: string;
+  };
+  slashArgPicker: {
+    noMatch: string;
+    keepTyping: string;
+    above: string;
+    below: string;
+    footer: string;
+  };
+  mcpMarketplace: {
+    title: string;
+    filter: string;
+    filterPlaceholder: string;
+    matchSingular: string;
+    matchPlural: string;
+    loading: string;
+    noEntries: string;
+    opening: string;
+    cached: string;
+    exhausted: string;
+    loadingMore: string;
+    allLoaded: string;
+    fetchingDetail: string;
+    noInstallInfo: string;
+    alreadyInstalled: string;
+    installed: string;
+    uninstalled: string;
+    installFailed: string;
+    notInstalled: string;
+    bridged: string;
+    bridgeFailed: string;
+    bridgeReloadFailed: string;
+    restartBridge: string;
+    needsEnv: string;
+    badgeOfficial: string;
+    badgeSmithery: string;
+    badgeLocal: string;
+    footerHint: string;
+    specLine: string;
+    smitheryDetail: string;
+    statusError: string;
+  };
+  mcpBrowser: {
+    title: string;
+    empty: string;
+    serverCount: string;
+    footer: string;
+  };
+  checkpointPicker: {
+    title: string;
+    header: string;
+    empty: string;
+    more: string;
+    footer: string;
+    footerEmpty: string;
+  };
+  planReviseConfirm: {
+    title: string;
+    metaRight: string;
+    updatedSummary: string;
+    acceptLabel: string;
+    acceptHint: string;
+    rejectLabel: string;
+    rejectHint: string;
+  };
+  diffApp: {
+    title: string;
+    turnLabel: string;
+    turnsAligned: string;
+    paneEmpty: string;
+    kindMatch: string;
+    kindDiverge: string;
+    kindOnlyInA: string;
+    kindOnlyInB: string;
+  };
+  recordView: {
+    userPrefix: string;
+    assistant: string;
+    toolPrefix: string;
+    argsLabel: string;
+    resultArrow: string;
+    error: string;
+    cache: string;
+    toolCallOnly: string;
+    truncateExtra: string;
+  };
+  replayApp: {
+    emptyTranscript: string;
+    turnProgress: string;
+    noRecords: string;
+    untracked: string;
+    churned: string;
   };
 }

@@ -61,6 +61,8 @@ export class ToolRegistry {
   private _interceptor: ToolInterceptor | null = null;
   private _auditListener: ToolCallAuditListener | null = null;
   private _resultAugmenter: ToolResultAugmenter | null = null;
+  /** Per-tool fingerprint of the last call that failed schema validation. Cleared by any successful validation for that tool. */
+  private readonly _lastMalformed = new Map<string, string>();
 
   constructor(opts: ToolRegistryOptions = {}) {
     this._autoFlatten = opts.autoFlatten !== false;
@@ -161,6 +163,7 @@ export class ToolRegistry {
     if (!tool) {
       return JSON.stringify({ error: `unknown tool: ${name}` });
     }
+    const fingerprint = fingerprintArgs(argumentsRaw);
     let args: Record<string, unknown>;
     try {
       args =
@@ -170,9 +173,11 @@ export class ToolRegistry {
             : {}
           : (argumentsRaw ?? {});
     } catch (err) {
-      return JSON.stringify({
-        error: `invalid tool arguments JSON: ${(err as Error).message}`,
-      });
+      return this._noteMalformed(
+        name,
+        fingerprint,
+        `invalid tool arguments JSON: ${(err as Error).message}`,
+      );
     }
 
     // Re-nest dot-notation args back to the original shape, but only when
@@ -183,6 +188,17 @@ export class ToolRegistry {
     if (tool.flatSchema && args && typeof args === "object" && hasDotKey(args)) {
       args = nestArguments(args);
     }
+
+    const missing = tool.parameters ? missingRequiredParam(tool.parameters, args) : null;
+    if (missing) {
+      return this._noteMalformed(
+        name,
+        fingerprint,
+        `missing required parameter "${missing}". Retry with all required parameters filled.`,
+      );
+    }
+    // Validation passed — this tool's malformed-args streak is broken.
+    this._lastMalformed.delete(name);
 
     // Plan-mode enforcement — runs AFTER arg parsing so a tool with a
     // runtime `readOnlyCheck` can inspect the actual args (e.g.
@@ -266,13 +282,29 @@ export class ToolRegistry {
     }
     return finalResult;
   }
+
+  /** Records the failed call's fingerprint; on the 2nd consecutive identical malformed call to the same tool, returns a sharper error that tells the model to stop retrying. */
+  private _noteMalformed(name: string, fingerprint: string, detail: string): string {
+    const prev = this._lastMalformed.get(name);
+    this._lastMalformed.set(name, fingerprint);
+    if (prev === fingerprint) {
+      return JSON.stringify({
+        error: `${name}: same call just failed validation (${detail}) — DO NOT retry with identical args. Either fix the call (read the schema in the tool spec) or pick a different tool.`,
+        consecutiveMalformed: true,
+      });
+    }
+    return JSON.stringify({ error: `${name}: ${detail}` });
+  }
 }
 
 function isReadOnlyCall(tool: InternalTool, args: Record<string, unknown>): boolean {
   if (tool.readOnlyCheck) {
     try {
       return Boolean(tool.readOnlyCheck(args as never));
-    } catch {
+    } catch (err) {
+      // A buggy readOnlyCheck silently downgrades to "may mutate" — log it so
+      // the bug doesn't hide behind plan-mode refusals or storm-breaker noise.
+      process.stderr.write(`readOnlyCheck for ${tool.name} threw: ${(err as Error).message}\n`);
       return false;
     }
   }
@@ -284,4 +316,24 @@ function hasDotKey(obj: Record<string, unknown>): boolean {
     if (k.includes(".")) return true;
   }
   return false;
+}
+
+/** Stable per-call key for the malformed-args storm guard. String args compare as-is; objects round-trip through JSON so key order is stable. */
+function fingerprintArgs(argumentsRaw: string | Record<string, unknown>): string {
+  if (typeof argumentsRaw === "string") return argumentsRaw;
+  try {
+    return JSON.stringify(argumentsRaw);
+  } catch {
+    return "";
+  }
+}
+
+/** If the schema declares required params, return the first one that's missing. */
+function missingRequiredParam(schema: JSONSchema, args: Record<string, unknown>): string | null {
+  const required = schema.required;
+  if (!required || required.length === 0) return null;
+  for (const key of required) {
+    if (args[key] === undefined) return key;
+  }
+  return null;
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ToolRegistry } from "../src/tools.js";
 
 describe("ToolRegistry", () => {
@@ -308,6 +308,236 @@ describe("ToolRegistry", () => {
     it("returns false for unknown tools", () => {
       const reg = new ToolRegistry();
       expect(reg.isParallelSafe("nope")).toBe(false);
+    });
+  });
+
+  describe("required parameter validation", () => {
+    it("returns a structured error when a required param is missing entirely", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "read_file",
+        description: "read a file",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Path to read." },
+          },
+          required: ["path"],
+        },
+        fn: ({ path }: { path: string }) => `read ${path}`,
+      });
+      const out = await reg.dispatch("read_file", "{}");
+      expect(JSON.parse(out).error).toMatch(/missing required parameter "path"/);
+    });
+
+    it("lets the tool fn handle empty string — JSON Schema required only checks presence, not emptiness", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "read_file",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+          },
+          required: ["path"],
+        },
+        fn: ({ path }: { path: string }) => `read ${path}`,
+      });
+      const out = await reg.dispatch("read_file", '{"path": ""}');
+      expect(out).toBe("read ");
+    });
+
+    it("passes through when all required params are present and non-empty", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "read_file",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+          },
+          required: ["path"],
+        },
+        fn: ({ path }: { path: string }) => `read ${path}`,
+      });
+      const out = await reg.dispatch("read_file", '{"path": "/foo/bar.ts"}');
+      expect(out).toBe("read /foo/bar.ts");
+    });
+
+    it("skips validation when the schema has no required list (all params optional)", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "optional_tool",
+        parameters: {
+          type: "object",
+          properties: {
+            msg: { type: "string" },
+          },
+        },
+        fn: () => "ok",
+      });
+      const out = await reg.dispatch("optional_tool", "{}");
+      expect(out).toBe("ok");
+    });
+
+    it("passes through when required param is a nested object (not a string)", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "write_file",
+        parameters: {
+          type: "object",
+          properties: {
+            file: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                content: { type: "string" },
+              },
+            },
+          },
+          required: ["file"],
+        },
+        fn: ({ file }: { file: { path: string; content: string } }) => `wrote ${file.path}`,
+      });
+      const out = await reg.dispatch("write_file", '{"file": {"path": "/foo", "content": "hi"}}');
+      expect(out).toBe("wrote /foo");
+    });
+  });
+
+  describe("malformed-args storm guard (issue #651)", () => {
+    function readFileReg(): ToolRegistry {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "read_file",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+        fn: ({ path }: { path: string }) => `read ${path}`,
+      });
+      return reg;
+    }
+
+    it("first malformed call returns the normal missing-param error", async () => {
+      const reg = readFileReg();
+      const out = await reg.dispatch("read_file", "{}");
+      const parsed = JSON.parse(out);
+      expect(parsed.error).toMatch(/missing required parameter "path"/);
+      expect(parsed.consecutiveMalformed).toBeUndefined();
+    });
+
+    it("2nd consecutive identical malformed call short-circuits with a sharper error", async () => {
+      const reg = readFileReg();
+      await reg.dispatch("read_file", "{}");
+      const out = await reg.dispatch("read_file", "{}");
+      const parsed = JSON.parse(out);
+      expect(parsed.consecutiveMalformed).toBe(true);
+      expect(parsed.error).toMatch(/DO NOT retry with identical args/);
+    });
+
+    it("a successful call between two malformed ones clears the streak", async () => {
+      const reg = readFileReg();
+      await reg.dispatch("read_file", "{}"); // 1st malformed
+      await reg.dispatch("read_file", '{"path": "ok.txt"}'); // success — clears
+      const out = await reg.dispatch("read_file", "{}"); // 1st-again, NOT 2nd-consecutive
+      const parsed = JSON.parse(out);
+      expect(parsed.consecutiveMalformed).toBeUndefined();
+    });
+
+    it("different malformed args to the same tool do not trip the guard", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "edit",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" }, body: { type: "string" } },
+          required: ["path", "body"],
+        },
+        fn: () => "edited",
+      });
+      await reg.dispatch("edit", '{"path": "x"}'); // missing body
+      const out = await reg.dispatch("edit", '{"body": "y"}'); // missing path — different shape
+      const parsed = JSON.parse(out);
+      expect(parsed.consecutiveMalformed).toBeUndefined();
+    });
+
+    it("invalid JSON, identical twice, also short-circuits", async () => {
+      const reg = readFileReg();
+      await reg.dispatch("read_file", "{not json");
+      const out = await reg.dispatch("read_file", "{not json");
+      const parsed = JSON.parse(out);
+      expect(parsed.consecutiveMalformed).toBe(true);
+      expect(parsed.error).toMatch(/invalid tool arguments JSON/);
+    });
+
+    it("per-tool tracking — malformed read_file does not affect a separate edit_file tool", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "read_file",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+        fn: () => "r",
+      });
+      reg.register({
+        name: "edit_file",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+        fn: () => "e",
+      });
+      await reg.dispatch("read_file", "{}");
+      const out = await reg.dispatch("edit_file", "{}"); // first time for edit_file
+      const parsed = JSON.parse(out);
+      expect(parsed.consecutiveMalformed).toBeUndefined();
+    });
+  });
+
+  describe("isReadOnlyCall — buggy readOnlyCheck", () => {
+    it("warns when readOnlyCheck throws and treats the call as not read-only", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "buggy_tool",
+        readOnlyCheck: () => {
+          throw new Error("check is buggy");
+        },
+        fn: () => "ok",
+      });
+      reg.setPlanMode(true);
+      const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        const out = await reg.dispatch("buggy_tool", "{}");
+        expect(JSON.parse(out).error).toMatch(/unavailable in plan mode/);
+        const writes = writeSpy.mock.calls.map((c) => String(c[0]));
+        expect(
+          writes.some((w) => w.includes("readOnlyCheck for buggy_tool threw: check is buggy")),
+        ).toBe(true);
+      } finally {
+        writeSpy.mockRestore();
+      }
+    });
+
+    it("stays silent when readOnlyCheck succeeds", async () => {
+      const reg = new ToolRegistry();
+      reg.register({
+        name: "good_tool",
+        readOnlyCheck: () => true,
+        fn: () => "ok",
+      });
+      reg.setPlanMode(true);
+      const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        await reg.dispatch("good_tool", "{}");
+        const writes = writeSpy.mock.calls.map((c) => String(c[0]));
+        expect(writes.some((w) => w.includes("readOnlyCheck for"))).toBe(false);
+      } finally {
+        writeSpy.mockRestore();
+      }
     });
   });
 });

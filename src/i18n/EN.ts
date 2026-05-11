@@ -45,6 +45,10 @@ export const EN: TranslationSchema = {
     applied: "applied",
     rejected: "rejected",
     noDashboard: "Suppress the auto-launched embedded web dashboard.",
+    dashboardPortHint:
+      "Pin the dashboard to a fixed port (1–65535). Stable across restarts — required for SSH tunnels. Default: ephemeral.",
+    dashboardPortInvalid:
+      "▲ ignoring --dashboard-port={value} (must be an integer 1–65535) — falling back to ephemeral",
     dashboardAutoStartFailed:
       "▲ dashboard auto-start failed ({reason}) — try /dashboard, or pass --no-dashboard to silence",
     systemAppendHint:
@@ -429,6 +433,16 @@ export const EN: TranslationSchema = {
     savedFooter: "[Enter] to exit",
     selectFooter: "[↑↓] navigate · [Enter] confirm · [Esc] cancel",
     stepCounter: "Step {step}/{total} · ",
+    exitHint: "/exit to abort",
+    apiKeyPlaceholder: "sk-...",
+    themeSampleReasoning: "Reasoning",
+  },
+  themePicker: {
+    header: "Theme",
+    footer: "↑↓ pick · ⏎ confirm · esc cancel",
+    currentPref: "current preference",
+    activeNow: "active now",
+    autoDesc: "use REASONIX_THEME or default",
   },
   planFlow: {
     approveCardTitle: "Approve plan",
@@ -493,6 +507,9 @@ export const EN: TranslationSchema = {
       counterDone: "{done}/{total} done ({pct}%) · {total} steps",
       counterDoneSingular: "{done}/{total} done ({pct}%) · {total} step",
     },
+    reviseTitle: "Revise plan",
+    reviseSteps: "{count} steps",
+    reviseFooter: "↑↓ focus  ·  space toggle skip  ·  k/j move  ·  ⏎ accept  ·  esc cancel",
   },
   app: {
     walkCancelledRemaining: "▸ walk cancelled — {count} block(s) still pending.",
@@ -668,6 +685,8 @@ export const EN: TranslationSchema = {
       loopStarted:
         '▸ loop started — re-submitting "{prompt}" every {duration}. Type anything (or /loop stop) to cancel.',
       keysNeedsTui: "/keys needs a TUI context (postKeys wired).",
+      unknownCommand: "unknown command: /{cmd} — did you mean {list}?",
+      unknownCommandShort: "unknown command: /{cmd}  (try /help)",
     },
     admin: {
       doctorNeedsTui: "/doctor needs a TUI context (postDoctor wired).",
@@ -895,6 +914,15 @@ export const EN: TranslationSchema = {
       completionComplete: "complete",
       stopAborted:
         "▸ plan stopped — model aborted; type a follow-up to continue or start a new task.",
+      doneUsage:
+        "usage: /plans done <stepId>  ·  /plans done all — manual override when the model forgot to call mark_step_complete",
+      doneUnavailable: "/plans done is only available inside an active session.",
+      doneNoPlan: "no active plan — nothing to mark done.",
+      doneNotInPlan: "step `{id}` is not in the active plan. Run /plans to see the step ids.",
+      doneAlready: "step `{id}` was already marked done.",
+      doneOk: "▸ marked step `{id}` done.",
+      doneAllNoop: "every step is already done.",
+      doneAllOk: "▸ marked {count} step(s) done.",
     },
     jobs: {
       codeOnly: "/jobs is only available inside `reasonix code`.",
@@ -972,6 +1000,9 @@ export const EN: TranslationSchema = {
       unknownServer: 'unknown MCP server "{name}". Known: {list}.',
       noneList: "(none)",
       reconnectNoTui: "/mcp reconnect requires the interactive TUI (postInfo not wired).",
+      liveTab: "Live",
+      marketplaceTab: "Marketplace",
+      tabHint: "tab to switch",
     },
     init: {
       codeOnly:
@@ -1034,6 +1065,7 @@ export const EN: TranslationSchema = {
     recordingGlyph: "\u25CFREC",
     mb: " MB",
     evt: " evt",
+    editsLabel: "edits:",
   },
   editMode: {
     plan: "PLAN MODE",
@@ -1059,6 +1091,9 @@ export const EN: TranslationSchema = {
     hintAbort: "abort",
     hintQuit: "quit",
     abortedHint: "turn aborted by user \u00b7 esc again to clear \u00b7 \u23ce to ask a follow-up",
+    editorNoRawMode:
+      "external editor unavailable \u2014 stdin doesn't support raw-mode toggling on this terminal",
+    editorFailed: "external editor:",
   },
   shellConfirm: {
     title: "Shell command",
@@ -1078,6 +1113,9 @@ export const EN: TranslationSchema = {
     allowAlwaysDesc: "remember `{prefix}` for this project",
     deny: "deny",
     denyDesc: "press Tab to add context telling the model why",
+    cwdLabel: "cwd",
+    timeoutLabel: "timeout",
+    waitLabel: "wait",
   },
   editConfirm: {
     footer:
@@ -1143,6 +1181,14 @@ export const EN: TranslationSchema = {
     groupCode: "CODE",
     groupJobs: "JOBS",
     groupAdvanced: "ADVANCED",
+    groupDetailSetup: "model + cost",
+    groupDetailInfo: "current state",
+    groupDetailChat: "daily turn ops",
+    groupDetailExtend: "MCP, memory, skills",
+    groupDetailSession: "saved sessions",
+    groupDetailCode: "edits + plans (code mode)",
+    groupDetailJobs: "background processes (code mode)",
+    groupDetailAdvanced: "rare or set-and-forget",
   },
   atMentions: {
     loading: "loading\u2026",
@@ -1195,21 +1241,42 @@ export const EN: TranslationSchema = {
     probeFailed: "probe failed \u2014 {message}",
   },
   webErrors: {
-    status: "web_search {status}",
-    mojeekBlocked: "web_search: Mojeek anti-bot page \u2014 rate-limited or blocked",
+    status:
+      "web_search {status} \u2014 try: the search backend returned an error; rephrase the query, or switch engine with /search-engine mojeek|searxng",
+    rateLimit429:
+      "web_search 429 \u2014 try: wait 10s before retrying, or rephrase the query; the search backend is rate-limiting this client",
+    forbidden403:
+      "web_search 403 \u2014 try: the search backend is blocking this client; switch engine with /search-engine mojeek|searxng, or wait and retry later",
+    serverError5xx:
+      "web_search {status} \u2014 try: open the search URL in a browser; if it loads this is transient and a retry in 30s may help",
+    mojeekBlocked:
+      "web_search: Mojeek anti-bot page \u2014 rate-limited or blocked \u2014 try: wait 30s and retry, or switch engine with /search-engine searxng",
     mojeekNoResults:
-      "web_search: 0 results but response doesn't look like a real empty page ({chars} chars, first 120: {preview})",
-    invalidEndpoint: 'web_search: invalid SearXNG endpoint "{endpoint}"',
-    endpointMustBeHttp: "web_search: SearXNG endpoint must be http(s), got {protocol}",
+      "web_search: 0 results but response doesn't look like a real empty page ({chars} chars, first 120: {preview}) \u2014 try: rephrase the query with simpler terms, or switch engine with /search-engine searxng",
+    invalidEndpoint:
+      'web_search: invalid SearXNG endpoint "{endpoint}" \u2014 try: set a valid URL with /search-endpoint http://host:port',
+    endpointMustBeHttp:
+      "web_search: SearXNG endpoint must be http(s), got {protocol} \u2014 try: set a valid URL with /search-endpoint http://host:port",
     cannotReach:
-      "web_search: Cannot reach SearXNG server at {endpoint}. Please install SearXNG (https://github.com/searxng/searxng) and start it (e.g. `docker run -d -p 8080:8080 searxng/searxng`), or switch to the default engine with /search-engine mojeek.",
+      "web_search: Cannot reach SearXNG server at {endpoint} \u2014 try: install and start SearXNG (https://github.com/searxng/searxng, e.g. `docker run -d -p 8080:8080 searxng/searxng`), or switch to the default engine with /search-engine mojeek",
     searxngNoResults:
-      "web_search: 0 results but SearXNG response doesn't look like an empty results page ({chars} chars)",
-    fetchStatus: "web_fetch {status} for {url}",
-    fetchTooLarge: "web_fetch refused: content-length {len} bytes exceeds {cap}-byte cap ({url})",
+      "web_search: 0 results but SearXNG response doesn't look like an empty results page ({chars} chars) \u2014 try: rephrase the query with simpler terms, or switch engine with /search-engine mojeek",
+    fetchStatus:
+      "web_fetch {status} for {url} \u2014 try: confirm the URL resolves in a browser; status suggests the host returned an error page",
+    fetchRateLimit429:
+      "web_fetch 429 for {url} \u2014 try: wait 10s before retrying; the host is rate-limiting this client",
+    fetchForbidden403:
+      "web_fetch 403 for {url} \u2014 try: the host is blocking this client; the page may require login or block bots \u2014 use web_search snippets instead",
+    fetchServerError5xx:
+      "web_fetch {status} for {url} \u2014 try: open the URL in a browser; if it loads this is transient and a retry in 30s may help",
+    fetchTimeout:
+      "web_fetch: timed out after {ms}ms for {url} \u2014 try: a shorter URL or smaller content; this may be a slow CDN, or retry once",
+    fetchTooLarge:
+      "web_fetch refused: content-length {len} bytes exceeds {cap}-byte cap ({url}) \u2014 try: a different URL with smaller content; this page is too large to fetch",
     fetchBodyTooLarge:
-      "web_fetch refused: response body exceeded {cap}-byte cap ({seen} bytes seen)",
-    fetchInvalidUrl: "web_fetch: url must start with http:// or https://",
+      "web_fetch refused: response body exceeded {cap}-byte cap ({seen} bytes seen) \u2014 try: a different URL with smaller content; this page streamed past the size cap",
+    fetchInvalidUrl:
+      "web_fetch: url must start with http:// or https:// \u2014 try: pass an absolute http(s) URL (the URL is malformed or uses an unsupported scheme)",
   },
   choiceConfirm: {
     customLabel: "Let me type my own answer",
@@ -1230,6 +1297,7 @@ export const EN: TranslationSchema = {
     error: "error",
     doctor: "doctor",
     you: "you",
+    task: "task",
   },
   cardLabels: {
     prompt: "prompt",
@@ -1304,5 +1372,114 @@ export const EN: TranslationSchema = {
     labelReasoning: "reasoning",
     yankedToast: "▸ copied {size} chars to clipboard (osc52)",
     yankedToastFile: "▸ copied {size} chars · file: {path}",
+  },
+  mcpHealth: {
+    noData: "no inspect data",
+    healthy: "healthy \u00b7 {ms}ms",
+    slow: "slow \u00b7 {ms}ms",
+    verySlow: "very slow \u00b7 {ms}ms",
+  },
+  denyContextInput: {
+    description:
+      "Tell the agent why you denied this. The next attempt will see your reason as additional context.",
+  },
+  cardStream: {
+    scrollAbove: " \u2191 {scroll} / {max} row above",
+    scrollAbovePlural: " \u2191 {scroll} / {max} rows above",
+    scrollMore: " \u2014 {remaining} more",
+    scrollPgUp: " \u00b7 PgUp / wheel / \u2191",
+  },
+  slashArgPicker: {
+    noMatch: 'no match for "{partial}"',
+    keepTyping: " \u2014 keep typing, or Backspace to edit",
+    above: "   \u2191 {hidden} above",
+    below: "   \u2193 {hidden} below",
+    footer: "  \u2191\u2193 navigate \u00b7 Tab / \u23ce pick \u00b7 esc cancel",
+  },
+  mcpMarketplace: {
+    title: "MCP marketplace",
+    filter: "filter: ",
+    filterPlaceholder: "(type to filter)",
+    matchSingular: "{n} match",
+    matchPlural: "{n} matches",
+    loading: "loading\u2026",
+    noEntries: "no entries",
+    opening: "opening registry\u2026",
+    cached: "\u00b7 cached",
+    exhausted: "\u00b7 exhausted",
+    loadingMore: "loading more\u2026",
+    allLoaded: "all pages loaded",
+    fetchingDetail: "fetching smithery detail\u2026",
+    noInstallInfo: "no install info for {name} - try `npx -y @smithery/cli install {name}`",
+    alreadyInstalled: "already installed: {spec}",
+    installed: "installed \u2192 {spec}",
+    uninstalled: "uninstalled {name}",
+    installFailed: "install failed: {message}",
+    notInstalled: "not installed: {name}",
+    bridged: "\u2713 installed {name} - bridged",
+    bridgeFailed: "\u25b2 installed {name} - bridge failed: {reason}",
+    bridgeReloadFailed:
+      "\u2713 installed {name} - restart `reasonix code` to bridge (reload failed: {message})",
+    restartBridge: "\u2713 installed {name} - restart `reasonix code` to bridge",
+    needsEnv: "  \u00b7  needs env: {env}",
+    badgeOfficial: "[off]",
+    badgeSmithery: "[smt]",
+    badgeLocal: "[loc]",
+    footerHint:
+      "type filter \u00b7 \u2191\u2193 pick \u00b7 \u23ce install/toggle \u00b7 PgDn load more \u00b7 esc close",
+    specLine: "spec: {runtime} {id} \u00b7 {transport}",
+    smitheryDetail: "(smithery listing \u2014 install detail fetched on Enter)",
+    statusError: "error: {message}",
+  },
+  mcpBrowser: {
+    title: "\u25c8 MCP browser",
+    empty: "No MCP servers attached. Run `reasonix setup` to pick some, or launch with --mcp.",
+    serverCount: "{count} server{s}",
+    footer: "\u2191\u2193 pick \u00b7 [r] reconnect \u00b7 [d] disable \u00b7 esc quit",
+  },
+  checkpointPicker: {
+    title: "restore a checkpoint \u2014 {workspace}",
+    header: " \u25c8 REASONIX \u00b7 pick a checkpoint ",
+    empty: "  no checkpoints in this workspace yet - see /checkpoint to make one",
+    more: "     \u2026 {hidden} more",
+    footer: "  \u2191\u2193 pick  \u00b7  \u23ce restore  \u00b7  [d] forget  \u00b7  esc quit",
+    footerEmpty: "  esc quit",
+  },
+  planReviseConfirm: {
+    title: "plan revision proposed",
+    metaRight: "\u2212{removed}  +{added}  \u00b7  {kept} kept",
+    updatedSummary: "updated summary: {summary}",
+    acceptLabel: "Accept revision - apply the new step list",
+    acceptHint: "Replaces the remaining plan with the proposed steps. Done steps are untouched.",
+    rejectLabel: "Reject - keep the original plan",
+    rejectHint: "Drops the proposal. Model continues with the original remaining steps.",
+  },
+  diffApp: {
+    title: "reasonix diff",
+    turnLabel: "turn {turn} ({current}/{total})",
+    turnsAligned: "{count} turns aligned",
+    paneEmpty: "(no records on this side for this turn)",
+    kindMatch: "\u2713 match",
+    kindDiverge: "\u2605 diverge",
+    kindOnlyInA: "\u2190 only in A",
+    kindOnlyInB: "\u2192 only in B",
+  },
+  recordView: {
+    userPrefix: "you \u203a ",
+    assistant: "assistant",
+    toolPrefix: "tool<",
+    argsLabel: "  args: ",
+    resultArrow: "  \u2192 ",
+    error: "error ",
+    cache: "  \u00b7 cache ",
+    toolCallOnly: "(tool-call response only)",
+    truncateExtra: "(+{extra} chars)",
+  },
+  replayApp: {
+    emptyTranscript: "empty transcript",
+    turnProgress: "turn {current}/{total}",
+    noRecords: "no records",
+    untracked: "(untracked)",
+    churned: "(churned \u00d7{count})",
   },
 };
