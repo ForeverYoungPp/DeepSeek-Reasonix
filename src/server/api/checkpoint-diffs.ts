@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadCheckpoint } from "../../code/checkpoints.js";
 import { lineDiff } from "../../tools/fs/edit.js";
@@ -35,7 +35,12 @@ export async function handleCheckpointDiffs(
 
   for (const snap of checkpoint.files) {
     const absPath = resolve(rootDir, snap.path);
-    const currentContent = existsSync(absPath) ? readFileSync(absPath, "utf8") : null;
+    let currentContent: string | null = null;
+    try {
+      currentContent = readFileSync(absPath, "utf8");
+    } catch {
+      currentContent = null;
+    }
 
     // Snapshot says file existed
     if (snap.content !== null) {
