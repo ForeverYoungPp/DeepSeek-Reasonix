@@ -18,6 +18,10 @@ const html = htm.bind(h);
 interface DE { kind: "context" | "ins" | "del"; text: string }
 interface DP { left: string | null; right: string | null; kind: "context" | "change" | "del" | "ins" }
 
+function escapeAttr(s: string): string {
+  return s.replace(/["&<>]/g, (c) => ({ '"': "&quot;", "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
+}
+
 function lineDiff(a: string[], b: string[]): DE[] {
   const m = a.length, n = b.length;
   const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
@@ -151,7 +155,7 @@ export function ChangesPanel() {
         const body = diff.patch
           ? `<div class="review-file-body" style="display:none">${renderDiffHtml(diff.patch, diffStyle)}</div>`
           : "";
-        return `<div class="review-file-item" data-file="${file}"><div class="review-file-header">${chev}<span class="filename">${file}</span>${stat}</div>${body}</div>`;
+        return `<div class="review-file-item" data-file="${escapeAttr(file)}"><div class="review-file-header">${chev}<span class="filename">${escapeAttr(file)}</span>${stat}</div>${body}</div>`;
       }).join(""),
     );
   }, [diffs, diffStyle, t]);
