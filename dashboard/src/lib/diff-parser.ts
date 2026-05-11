@@ -15,10 +15,7 @@ export interface Hunk {
   lines: HunkLine[];
 }
 
-/**
- * Parse a unified diff patch string into structured hunk arrays.
- * Hand-written parser — no external dependency.
- */
+/** Parse a unified diff patch string into structured hunk arrays. No external deps. */
 export function parseHunks(patch: string): Hunk[] {
   if (!patch) return [];
 
