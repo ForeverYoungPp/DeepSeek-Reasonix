@@ -1545,7 +1545,6 @@ function ChatPane(props: ChatPaneProps) {
           </div>
         ` : null}
         <div style=${{ display: "flex", gap: "8px", alignItems: "flex-end", position: "relative" }}>
-          <button style=${{ background: "transparent", border: "none", color: "var(--fg-3)", padding: "8px", cursor: "pointer", fontSize: "18px", flexShrink: 0 }}>+</button>
           <div style=${{ flex: 1, position: "relative" }}>
             ${
               popoverKind && popoverItems.length > 0
