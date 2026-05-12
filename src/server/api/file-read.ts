@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, join } from "node:path";
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { extname, join, resolve, sep } from "node:path";
 import type { DashboardContext } from "../context.js";
 import type { ApiResult } from "../router.js";
 
@@ -48,32 +48,13 @@ export async function handleFileRead(
   if (!filePath) return { status: 400, body: { error: "file path required" } };
 
   const cwd = ctx.getCurrentCwd?.();
-  if (!cwd || !existsSync(cwd)) {
-    return { status: 503, body: { error: "no project directory available" } };
-  }
+  if (!cwd) return { status: 503, body: { error: "no project directory available" } };
 
-  const fullPath = join(cwd, filePath);
-
-  if (!existsSync(fullPath)) {
-    return { status: 404, body: { error: `file not found: ${filePath}` } };
-  }
-
-  let st: ReturnType<typeof statSync>;
-  try {
-    st = statSync(fullPath);
-  } catch {
-    return { status: 500, body: { error: "cannot stat file" } };
-  }
-
-  if (!st.isFile()) {
-    return { status: 400, body: { error: "not a file" } };
-  }
-
-  if (st.size > MAX_FILE_SIZE) {
-    return {
-      status: 413,
-      body: { error: `file too large (${st.size} bytes, max ${MAX_FILE_SIZE})` },
-    };
+  // Path traversal guard: normalize and ensure result stays under cwd.
+  const resolved = resolve(join(cwd, filePath));
+  const normalizedCwd = resolve(cwd);
+  if (!resolved.startsWith(normalizedCwd + sep) && resolved !== normalizedCwd) {
+    return { status: 403, body: { error: "path escapes workspace" } };
   }
 
   const ext = extname(filePath).toLowerCase();
@@ -81,10 +62,33 @@ export async function handleFileRead(
     return { status: 400, body: { error: "binary file not supported" } };
   }
 
+  // Open once and use FD-based ops so inode is pinned — no TOCTOU window.
+  let fd: number;
   try {
-    const content = readFileSync(fullPath, "utf-8");
-    return { status: 200, body: { content, path: filePath, size: st.size } };
-  } catch (err) {
-    return { status: 500, body: { error: `read failed: ${(err as Error).message}` } };
+    fd = openSync(resolved, "r");
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return { status: 404, body: { error: `file not found: ${filePath}` } };
+    }
+    return { status: 500, body: { error: "cannot open file" } };
+  }
+
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) {
+      return { status: 400, body: { error: "not a file" } };
+    }
+    if (st.size > MAX_FILE_SIZE) {
+      return {
+        status: 413,
+        body: { error: `file too large (${st.size} bytes, max ${MAX_FILE_SIZE})` },
+      };
+    }
+    const buf = Buffer.alloc(st.size);
+    readSync(fd, buf, 0, st.size, 0);
+    return { status: 200, body: { content: buf.toString("utf-8"), path: filePath, size: st.size } };
+  } finally {
+    closeSync(fd);
   }
 }
