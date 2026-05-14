@@ -60,7 +60,26 @@ export function registerMemoryTools(
         },
         description: {
           type: "string",
-          description: "One-line summary shown in MEMORY.md (under ~150 chars).",
+          description:
+            "One-line summary shown in MEMORY.md index (capped ~110-130 chars) — this is ALL the model sees when deciding if the memory is relevant.\n" +
+            "\n" +
+            "MUST include trigger keywords — words the user would SAY or the model would THINK when this memory should activate.\n" +
+            "Rule: if a word never appears in a user message, it's a topic name, not a trigger keyword.\n" +
+            "\n" +
+            "Format: trigger:<word1/word2/word3> | <specific action to take>\n" +
+            "\n" +
+            "GOOD — trigger keywords are user-language, action is concrete:\n" +
+            "  trigger:deploy/release/ship | Blue-green deploy, 10% traffic first\n" +
+            "  trigger:write-tests/add-tests/run-tests | Mock external services, never connect real databases\n" +
+            "  trigger:reply/tone/how-to-answer | Keep replies direct, skip greetings and filler\n" +
+            "\n" +
+            "BAD — with reason:\n" +
+            "  Deployment rules           — pure concept name, no trigger keywords, no action\n" +
+            "  Be careful with tests      — vague advice, no trigger scenario, no action\n" +
+            "  FORMAT CORRECT, CONTENT WRONG:\n" +
+            "    trigger:project/code/work | Follow best practices\n" +
+            "      — trigger words match EVERY message (too broad),\n" +
+            "        action is empty filler, says nothing concrete",
         },
         content: {
           type: "string",
