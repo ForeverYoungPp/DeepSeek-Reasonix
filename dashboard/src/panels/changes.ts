@@ -1958,11 +1958,12 @@ function ChatPane(props: ChatPaneProps) {
             <textarea
               class="input"
               style=${{ width: "100%", resize: "none", minHeight: "36px", fontFamily: "inherit", fontSize: "13px", padding: "8px 10px", lineHeight: "1.4", background: "var(--bg-input)", border: "1px solid var(--bd)", borderRadius: "4px", color: "var(--fg-0)" }}
-              placeholder=${props.comments.length > 0 ? "总结评论..." : t("changes.chatPlaceholder")}
+              placeholder=${busy ? t("chat.placeholderBusy") : props.comments.length > 0 ? "总结评论..." : t("changes.chatPlaceholder")}
               value=${input}
               onInput=${onInput}
               onKeyDown=${onKeyDown}
               onBlur=${() => setTimeout(() => setPopoverKind(null), 150)}
+              disabled=${busy}
               rows="2"
             />
           </div>
